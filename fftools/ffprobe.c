@@ -4144,7 +4144,11 @@ static void ffprobe_show_library_versions(WriterContext *w)
     SHOW_LIB_VERSION(avfilter,   AVFILTER);
     SHOW_LIB_VERSION(swscale,    SWSCALE);
     SHOW_LIB_VERSION(swresample, SWRESAMPLE);
+
+#if CONFIG_POSTPROC
     SHOW_LIB_VERSION(postproc,   POSTPROC);
+#endif
+
     writer_print_section_footer(w);
 }
 
