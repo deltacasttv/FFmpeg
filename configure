@@ -335,6 +335,7 @@ External library support:
   --disable-securetransport disable Secure Transport, needed for TLS support
                            on OSX if openssl and gnutls are not used [autodetect]
   --enable-vapoursynth     enable VapourSynth demuxer [no]
+  --enable-videomaster     enable DELTACAST Videomaster I/O support [no]
   --disable-xlib           disable xlib [autodetect]
   --disable-zlib           disable zlib [autodetect]
 
@@ -1878,6 +1879,7 @@ EXTERNAL_LIBRARY_NONFREE_LIST="
     decklink
     libfdk_aac
     libtls
+    videomaster
 "
 
 EXTERNAL_LIBRARY_VERSION3_LIST="
@@ -3749,6 +3751,8 @@ v4l2_indev_suggest="libv4l2"
 v4l2_outdev_deps_any="linux_videodev2_h sys_videoio_h"
 v4l2_outdev_suggest="libv4l2"
 vfwcap_indev_deps="vfw32 vfwcap_defines"
+videomaster_indev_deps="videomaster"
+videomaster_indev_extralibs="-lvideomasterhd -lvideomasterhd_audio"
 xcbgrab_indev_deps="libxcb"
 xcbgrab_indev_suggest="libxcb_shm libxcb_shape libxcb_xfixes"
 xv_outdev_deps="xlib_xv xlib_x11 xlib_xext"
@@ -7008,6 +7012,9 @@ enabled libtwolame        && require libtwolame twolame.h twolame_init -ltwolame
 enabled libuavs3d         && require_pkg_config libuavs3d "uavs3d >= 1.1.41" uavs3d.h uavs3d_decode
 enabled libv4l2           && require_pkg_config libv4l2 libv4l2 libv4l2.h v4l2_ioctl
 enabled libvidstab        && require_pkg_config libvidstab "vidstab >= 0.98" vid.stab/libvidstab.h vsMotionDetectInit
+enabled videomaster       && check_lib videomaster "VideoMasterHD_Core.h VideoMasterHD_Dv_Audio.h" VHD_GetApiInfo "-lvideomasterhd -lvideomasterhd_audio"|| die "videomaster requires VideoMasterHD_Core.h & VideoMasterHD_Dv_Audio.h headers and videomaster & videomasterhd_audio library as well"
+enabled videomaster       && check_lib videomaster "VideoMasterHD_Core.h VideoMasterHD_Dv_Audio.h" VHD_SlotExtractDvPCMAudio "-lvideomasterhd -lvideomasterhd_audio" || die "videomaster requires VideoMasterHD_Dv_Audio.h header and videomasterhd_audio library"
+
 enabled libvmaf           && require_pkg_config libvmaf "libvmaf >= 2.0.0" libvmaf.h vmaf_init
 enabled libvmaf           && check_pkg_config libvmaf_cuda "libvmaf >= 2.0.0" libvmaf_cuda.h vmaf_cuda_state_init
 enabled libvo_amrwbenc    && require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc

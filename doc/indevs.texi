@@ -1483,6 +1483,81 @@ Use libv4l2 (v4l-utils) conversion functions. Default is 0.
 
 @end table
 
+@section videomaster
+
+The videomaster input device provides capture capabilities for HDMI and SDI DELTACAST(c) devices. 
+IP DELTACAST(c) devices are not supported.
+
+To enable this input device, you need to install the VideoMaster DELTACAST(c)
+SDK and you need to configure with appropriate @code{--extra-cflags} to target
+public include directories and @code{--extra-lfdflags} to target binary directories
+of the SDK.
+
+DELTACAST(c) devices are able to auto-detect video settings (width, height, frame rate)
+and perform video format conversion in YUV 422 10 bits or YUV 422 8 bits in reception.
+Audio can be only receive as PCM data and are not processed if the codec is different.
+The audio settings (sample size, sample rate, number of channels, ...) are also
+detect automaticaly.
+
+You can use the DELTACAST(c) device as FFmpeg input in two different way :
+
+@itemize
+
+@item By using the stream input name return by the @code{-sources} option of FFmepg. 
+The stream input name is generally of the form @code{stream <channel_index> on board <board_index>}.
+
+@item By using FFmpeg options to select the stream and the board when using a @code{dummy} input.
+
+@end itemize
+
+@subsection Options
+
+@table @option
+
+@item channel_index
+Index of the stream to use. Only required when the ffmpeg input is set to dummy (-i dummy). If the input is a source name (from `ffmpeg -sources videomaster`), the stream index is automatically deduced from the source name. Must be a non negative integer. An error is displayed if the selected board does not exist or is not detected.
+
+@item board_index
+Index of the board to use. Only required when the ffmpeg input is set to dummy (-i dummy). If the input is a source name (from `ffmpeg -sources videomaster`), the board index is automatically deduced from the source name. Must be a non negative integer. An error is displayed if the selected board does not exist or is not detected.
+
+@item timestamp_source
+Selects the source for video frame timestamps. Options are: 'hw' for hardware-based timestamps (highest precision, if supported), 'osc' for the device's internal oscillator, or 'system' for the system clock. Use 'hw' for best synchronization accuracy, 'osc' for stable internal timing, or 'system' for general-purpose timing. Default is 'osc'. An error is displayed if the selected timestamp_source is not supported.
+
+@item nb_channels
+Set the number of audio channels to capture. This option is only used when the input source is an SDI stream. For HDMI streams, the number of channels is automatically detected from the stream properties. Supported values are 1 to 16. If not specified, the default is to use all available channels detected on the SDI stream.
+
+@item sample_size
+Set the audio sample size in bits to capture. This option is only used when the input source is an SDI stream. For HDMI streams, the sample size is automatically detected from the stream properties. Supported values are 16 and 24. If not specified, an error will be displayed.
+
+@item sample_rate
+Set the audio sample rate in Hz to capture. This option is only used when the input source is an SDI stream. For HDMI streams, the sample rate is automatically detected from the stream properties. Supported values are 32000, 44100, and 48000. If not specified, an error will be displayed.
+
+@end table
+
+@subsection Examples
+
+@itemize
+
+@item
+List input devices:
+@example
+ffmpeg -sources videomaster
+@end example
+
+@item
+Capture video clip from the stream name with the default timestamp source ('osc')
+@example
+ffmpeg -f videomaster -i "stream 0 on board 0" -c:a copy -c:v copy output.avi
+@end example
+
+@item
+Capture video clip from the options using the hardware timestamp source
+@example
+ffmpeg -channel_index 0 -board_index 0 -timestamp_source hw -f videomaster -i dummy -c:a copy -c:v copy output.avi
+@end example
+
+@end itemize
+
 @section vfwcap
 
 VfW (Video for Windows) capture input device.
