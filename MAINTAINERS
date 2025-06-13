@@ -304,6 +304,7 @@ libavdevice
   sdl                                   Stefano Sabatini
   sdl2.c                                Josh de Kock
   v4l2.c                                Giorgio Vazzana
+  videomaster                           Pierre Perick (p.perick@deltatec.be)
   vfwcap.c                              Ramiro Polla
   xv.c                                  Lukasz Marek
 
