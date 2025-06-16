@@ -7025,10 +7025,10 @@ case "$target_os" in
         ;;
     *)
         enabled videomaster       && 
-            check_lib videomaster "VideoMasterHD/VideoMasterHD_Core.h VideoMasterHD/VideoMasterHD_Dv_Audio.h" VHD_GetApiInfo "-lvideomasterhd -lvideomasterhd_audio" || 
+            check_lib videomaster "VideoMasterHD_Core.h VideoMasterHD_Dv_Audio.h" VHD_GetApiInfo "-lvideomasterhd -lvideomasterhd_audio" || 
             die "videomaster requires VideoMasterHD_Core.h & VideoMasterHD_Dv_Audio.h headers and videomaster & videomasterhd_audio library as well";
         enabled videomaster       && 
-            check_lib videomaster "VideoMasterHD/VideoMasterHD_Core.h VideoMasterHD/VideoMasterHD_Dv_Audio.h" VHD_SlotExtractDvPCMAudio "-lvideomasterhd -lvideomasterhd_audio" || 
+            check_lib videomaster "VideoMasterHD_Core.h VideoMasterHD_Dv_Audio.h" VHD_SlotExtractDvPCMAudio "-lvideomasterhd -lvideomasterhd_audio" || 
             die "videomaster requires VideoMasterHD_Dv_Audio.h header and videomasterhd_audio library";
         ;;
 esac

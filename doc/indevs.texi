@@ -1490,8 +1490,8 @@ IP DELTACAST(c) devices are not supported.
 
 To enable this input device, you need to install the VideoMaster DELTACAST(c)
 SDK and you need to configure with appropriate @code{--extra-cflags} to target
-public include directories and @code{--extra-lfdflags} to target binary directories
-of the SDK.
+public include directories (or proper Frameworks path for MacOS) and @code{--extra-lfdflags} to target binary directories
+of the SDK (or, again, proper Frameworks path for MacOS).
 
 DELTACAST(c) devices are able to auto-detect video settings (width, height, frame rate)
 and perform video format conversion in YUV 422 10 bits or YUV 422 8 bits in reception.
