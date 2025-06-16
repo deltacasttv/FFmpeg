@@ -5809,6 +5809,8 @@ case $target_os in
             clang_version=$($cc -dumpversion)
             test ${clang_version%%.*} -eq 11 && add_cflags -fno-stack-check
         fi
+        # Using framework instead of library for VideoMasterHD on macOS
+        videomaster_indev_extralibs="-framework CoreFoundation -framework VideoMasterHD -framework VideoMasterHD_Audio"
         ;;
     msys*)
         die "Native MSYS builds are discouraged, please use the MINGW environment."
@@ -7012,8 +7014,26 @@ enabled libtwolame        && require libtwolame twolame.h twolame_init -ltwolame
 enabled libuavs3d         && require_pkg_config libuavs3d "uavs3d >= 1.1.41" uavs3d.h uavs3d_decode
 enabled libv4l2           && require_pkg_config libv4l2 libv4l2 libv4l2.h v4l2_ioctl
 enabled libvidstab        && require_pkg_config libvidstab "vidstab >= 0.98" vid.stab/libvidstab.h vsMotionDetectInit
-enabled videomaster       && check_lib videomaster "VideoMasterHD_Core.h VideoMasterHD_Dv_Audio.h" VHD_GetApiInfo "-lvideomasterhd -lvideomasterhd_audio"|| die "videomaster requires VideoMasterHD_Core.h & VideoMasterHD_Dv_Audio.h headers and videomaster & videomasterhd_audio library as well"
-enabled videomaster       && check_lib videomaster "VideoMasterHD_Core.h VideoMasterHD_Dv_Audio.h" VHD_SlotExtractDvPCMAudio "-lvideomasterhd -lvideomasterhd_audio" || die "videomaster requires VideoMasterHD_Dv_Audio.h header and videomasterhd_audio library"
+case "$target_os" in
+    darwin)
+        enabled videomaster       &&
+            check_lib videomaster "VideoMasterHD/VideoMasterHD_Core.h VideoMasterHD/VideoMasterHD_Dv_Audio.h" VHD_GetApiInfo "-framework VideoMasterHD -framework VideoMasterHD_Audio" ||
+            die "videomaster requires VideoMasterHD/VideoMasterHD_Core.h & VideoMasterHD/VideoMasterHD_Dv_Audio.h headers and videomaster & videomasterhd_audio library as well";
+        enabled videomaster       && 
+            check_lib videomaster "VideoMasterHD/VideoMasterHD_Core.h VideoMasterHD/VideoMasterHD_Dv_Audio.h" VHD_SlotExtractDvPCMAudio "-framework VideoMasterHD -framework VideoMasterHD_Audio" ||
+            die "videomaster requires VideoMasterHD/VideoMasterHD_Dv_Audio.h header and videomasterhd_audio library";
+        ;;
+    *)
+        enabled videomaster       && 
+            check_lib videomaster "VideoMasterHD/VideoMasterHD_Core.h VideoMasterHD/VideoMasterHD_Dv_Audio.h" VHD_GetApiInfo "-lvideomasterhd -lvideomasterhd_audio" || 
+            die "videomaster requires VideoMasterHD_Core.h & VideoMasterHD_Dv_Audio.h headers and videomaster & videomasterhd_audio library as well";
+        enabled videomaster       && 
+            check_lib videomaster "VideoMasterHD/VideoMasterHD_Core.h VideoMasterHD/VideoMasterHD_Dv_Audio.h" VHD_SlotExtractDvPCMAudio "-lvideomasterhd -lvideomasterhd_audio" || 
+            die "videomaster requires VideoMasterHD_Dv_Audio.h header and videomasterhd_audio library";
+        ;;
+esac
+
+
 
 enabled libvmaf           && require_pkg_config libvmaf "libvmaf >= 2.0.0" libvmaf.h vmaf_init
 enabled libvmaf           && check_pkg_config libvmaf_cuda "libvmaf >= 2.0.0" libvmaf_cuda.h vmaf_cuda_state_init

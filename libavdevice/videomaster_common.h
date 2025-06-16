@@ -33,12 +33,21 @@
 #include "libavdevice/avdevice.h"
 #include "libavutil/avutil.h"
 
+#if defined(__APPLE__)
+#include <VideoMasterHD/VideoMasterHD_Core.h>
+#include <VideoMasterHD/VideoMasterHD_Dv.h>
+#include <VideoMasterHD/VideoMasterHD_Dv_Audio.h>
+#include <VideoMasterHD/VideoMasterHD_Sdi.h>
+#include <VideoMasterHD/VideoMasterHD_Sdi_Audio.h>
+#include <VideoMasterHD/VideoMasterHD_String.h>
+#else
 #include <VideoMasterHD_Core.h>
 #include <VideoMasterHD_Dv.h>
 #include <VideoMasterHD_Dv_Audio.h>
 #include <VideoMasterHD_Sdi.h>
 #include <VideoMasterHD_Sdi_Audio.h>
 #include <VideoMasterHD_String.h>
+#endif
 #include <stdbool.h>
 
 /**
@@ -554,7 +563,7 @@ int ff_videomaster_release_data(VideoMasterContext *videomaster_context);
  * @param sample_rate VideoMaster sample rate enum value.
  * @return String representation of the sample rate, or "Unknown" if invalid.
  */
-char *ff_videomaster_sample_rate_to_string(
+const char *ff_videomaster_sample_rate_to_string(
     enum AVVideoMasterSampleRateValue sample_rate);
 
 /**
@@ -565,7 +574,7 @@ char *ff_videomaster_sample_rate_to_string(
  * @param sample_size VideoMaster sample size enum value.
  * @return String representation of the sample size, or "Unknown" if invalid.
  */
-char *ff_videomaster_sample_size_to_string(
+const char *ff_videomaster_sample_size_to_string(
     enum AVVideoMasterSampleSizeValue sample_size);
 
 /**

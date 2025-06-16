@@ -33,9 +33,13 @@
 
 #include "libavdevice/avdevice.h"
 #include "libavformat/avformat.h"
-
+#if defined(__APPLE__)
+#include <VideoMasterHD/VideoMasterHD_Core.h>
+#include <VideoMasterHD/VideoMasterHD_Dv.h>
+#else
 #include <VideoMasterHD_Core.h>
 #include <VideoMasterHD_Dv.h>
+#endif
 
 /**
  * @brief Lists available VideoMaster DELTACAST(c) devices.

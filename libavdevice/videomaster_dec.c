@@ -15,8 +15,13 @@
 
 #include "videomaster_common.h"
 
+#if defined(__APPLE__)
+#include <VideoMasterHD/VideoMasterHD_Core.h>
+#include <VideoMasterHD/VideoMasterHD_Dv.h>
+#else
 #include <VideoMasterHD_Core.h>
 #include <VideoMasterHD_Dv.h>
+#endif
 
 #define OFFSET(x) offsetof(struct VideoMasterData, x)
 #define DEC       AV_OPT_FLAG_DECODING_PARAM

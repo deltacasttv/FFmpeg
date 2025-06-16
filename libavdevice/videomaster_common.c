@@ -4,8 +4,13 @@
 #include "libavutil/mem.h"
 #include <stdio.h>
 
+#if defined(__APPLE__)
+#include <VideoMasterHD/VideoMasterHD_Core.h>
+#include <VideoMasterHD/VideoMasterHD_String.h>
+#else
 #include <VideoMasterHD_Core.h>
 #include <VideoMasterHD_String.h>
+#endif
 
 #define GET_AND_CHECK(func, avctx, ...)                                        \
     do                                                                         \
@@ -153,7 +158,7 @@ static int get_audio_stream_properties_from_audio_infoframe(
  * @return int 0 on success, negative AVERROR code on failure
  */
 static int get_board_name(VideoMasterContext *videomaster_context,
-                          uint32_t board_index, const char **board_name);
+                          uint32_t board_index, char **board_name);
 
 /**
  * @brief Get the board name and serial number from the device identify by the
@@ -399,6 +404,9 @@ int add_device_info_into_list(VideoMasterContext *videomaster_context,
 {
     char error_msg[128];
     int  av_error = 0;
+    const char *device_name = NULL;
+    const char *device_description = NULL;
+    AVDeviceInfo *new_device = NULL;
     snprintf(error_msg, sizeof(error_msg),
              "Failed to get stream properties for channel %d on board %d",
              videomaster_context->channel_index,
@@ -439,10 +447,10 @@ int add_device_info_into_list(VideoMasterContext *videomaster_context,
                       &videomaster_context->audio_codec),
                   "", error_msg);
 
-    const char *device_name = format_device_name(videomaster_context,
+    device_name = format_device_name(videomaster_context,
                                                  board_name, serial_number);
 
-    const char *device_description = format_device_description(
+    device_description = format_device_description(
         videomaster_context, board_name, serial_number);
     if (!device_name || !device_description)
     {
@@ -454,7 +462,7 @@ int add_device_info_into_list(VideoMasterContext *videomaster_context,
         return AVERROR(ENOMEM);
     }
 
-    AVDeviceInfo *new_device = create_device_info(videomaster_context,
+    new_device = create_device_info(videomaster_context,
                                                   (char *)device_name,
                                                   (char *)device_description,
                                                   true);
@@ -532,7 +540,6 @@ int disable_loopback_on_channel(VideoMasterContext *videomaster_context)
 {
     uint32_t has_passive_loopback = false;
     uint32_t has_active_loopback = false;
-    uint32_t has_firmware_loopback = false;
 
     handle_vhd_status(
         videomaster_context->avctx,
@@ -580,6 +587,7 @@ char *format_device_description(VideoMasterContext *videomaster_context,
                                 const char         *serial_number)
 {
     char *device_description = av_mallocz(256);
+    double frame_rate = 0.0;
     if (!device_description)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
@@ -587,7 +595,7 @@ char *format_device_description(VideoMasterContext *videomaster_context,
         return NULL;
     }
 
-    double frame_rate = (double)videomaster_context->video_frame_rate_num /
+    frame_rate = (double)videomaster_context->video_frame_rate_num /
                         videomaster_context->video_frame_rate_den;
     if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_HDMI)
     {
@@ -782,7 +790,7 @@ int get_audio_stream_properties_from_audio_infoframe(
 
     if (audio_type == VHD_DV_AUDIO_TYPE_NONE)
     {
-        av_log(avctx, AV_LOG_TRACE, "No audio detected\n", audio_type);
+        av_log(avctx, AV_LOG_TRACE, "No audio detected\n");
         ff_videomaster_stop_stream(videomaster_context);
         return 0;
     }
@@ -850,7 +858,7 @@ int get_board_name_and_serial_number(VideoMasterContext *videomaster_context,
 }
 
 int get_board_name(VideoMasterContext *videomaster_context,
-                   uint32_t board_index, const char **board_name)
+                   uint32_t board_index, char **board_name)
 {
     const char *local_board_name = VHD_GetBoardModel(board_index);
     *board_name = av_strdup(local_board_name);
@@ -899,10 +907,10 @@ int get_codec_from_audio_infoframe_and_aes_status(
     enum AVCodecID *codec_id)
 {
     int return_code = 0;
+    uint32_t sample_size = 0;
     switch (audio_info_frame.CodingType)
     {
     case VHD_DV_AUDIO_INFOFRAME_CODING_TYPE_PCM:
-        uint32_t sample_size = 0;
         get_sample_size_from_audio_infoframe_and_aes_status(videomaster_context,
                                                             audio_info_frame,
                                                             aes_status,
@@ -922,8 +930,6 @@ int get_codec_from_audio_infoframe_and_aes_status(
         switch (aes_status.LinearPCM)
         {
         case VHD_DV_AUDIO_AES_SAMPLE_STS_LINEAR_PCM_SAMPLE:
-
-            uint32_t sample_size = 0;
             get_sample_size_from_audio_infoframe_and_aes_status(
                 videomaster_context, audio_info_frame, aes_status,
                 &sample_size);
@@ -1350,6 +1356,16 @@ int interleaved_audio_info_to_audio_buffer(
     uint32_t bytes_per_sample = videomaster_context->audio_sample_size / 8;
     uint32_t nb_samples = 0;
     uint32_t channel_pair_count = 0;
+    uint32_t samples_in_channel = 0;
+    uint32_t dst_offset = 0;
+    uint32_t src_offset = 0;
+    uint32_t channel_pair_index = 0;
+    uint8_t *src = NULL;
+    uint8_t *dst = NULL;
+    uint8_t *src_ptr = NULL;
+    uint8_t *dst_ptr = NULL;
+    uint32_t mode = 0;
+    uint32_t size = 0;
     if (audio_info == NULL || audio_buffer == NULL || audio_buffer_size == NULL)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
@@ -1372,7 +1388,7 @@ int interleaved_audio_info_to_audio_buffer(
             channel_buffers[channel_pair_count] = audio_channel->pData;
             channel_sizes[channel_pair_count] = audio_channel->DataSize;
             channel_modes[channel_pair_count] = audio_channel->Mode;
-            uint32_t samples_in_channel = 0;
+            samples_in_channel = 0;
             if (audio_channel->Mode == VHD_AM_STEREO)
                 samples_in_channel = audio_channel->DataSize /
                                      (2 * bytes_per_sample);
@@ -1397,25 +1413,25 @@ int interleaved_audio_info_to_audio_buffer(
     // Interleave all channels, handling STEREO/MONO layout
     for (uint32_t sample_index = 0; sample_index < nb_samples; sample_index++)
     {
-        uint32_t dst_offset = sample_index * nb_channels * bytes_per_sample;
-        uint32_t channel_pair_index = 0;
+        dst_offset = sample_index * nb_channels * bytes_per_sample;
+        channel_pair_index = 0;
         for (uint32_t channel_index = 0; channel_index < nb_channels;)
         {
-            uint8_t *src = channel_buffers[channel_pair_index];
-            uint32_t mode = channel_modes[channel_pair_index];
-            uint32_t size = channel_sizes[channel_pair_index];
+            src = channel_buffers[channel_pair_index];
+            mode = channel_modes[channel_pair_index];
+            size = channel_sizes[channel_pair_index];
             if (mode == VHD_AM_STEREO)
             {
                 for (int lr_channel = 0;
                      lr_channel < 2 && channel_index < nb_channels;
                      lr_channel++, channel_index++)
                 {
-                    uint32_t src_offset = (sample_index * 2 + lr_channel) *
+                    src_offset = (sample_index * 2 + lr_channel) *
                                           bytes_per_sample;
-                    uint8_t *src_ptr = NULL;
+                    src_ptr = NULL;
                     if (src && src_offset + bytes_per_sample <= size)
                         src_ptr = src + src_offset;
-                    uint8_t *dst_ptr =
+                    dst_ptr =
                         (uint8_t *)videomaster_context->audio_buffer +
                         dst_offset + channel_index * bytes_per_sample;
                     if (src_ptr)
@@ -1424,11 +1440,11 @@ int interleaved_audio_info_to_audio_buffer(
             }
             else
             {
-                uint32_t src_offset = sample_index * bytes_per_sample;
-                uint8_t *src_ptr = NULL;
+                src_offset = sample_index * bytes_per_sample;
+                src_ptr = NULL;
                 if (src && src_offset + bytes_per_sample <= size)
                     src_ptr = src + src_offset;
-                uint8_t *dst_ptr =
+                dst_ptr =
                     (uint8_t *)videomaster_context->audio_buffer + dst_offset +
                     channel_index * bytes_per_sample;
                 if (src_ptr)
@@ -1526,12 +1542,13 @@ int ff_videomaster_create_devices_infos_from_board_index(
     VideoMasterContext *videomaster_context, uint32_t board_index,
     struct AVDeviceInfoList **device_list)
 {
-    av_log(videomaster_context->avctx, AV_LOG_TRACE,
-           "ff_videomaster_create_devices_"
-           "infos_from_board_index: IN\n");
     char *board_name = NULL;
     char *serial_number = NULL;
     int   av_error = 0;
+
+    av_log(videomaster_context->avctx, AV_LOG_TRACE,
+           "ff_videomaster_create_devices_"
+           "infos_from_board_index: IN\n");
     videomaster_context->board_index = board_index;
 
     GET_AND_CHECK(ff_videomaster_open_board_handle, videomaster_context->avctx,
@@ -1640,9 +1657,9 @@ int ff_videomaster_extract_context(AVFormatContext     *avctx,
 
 int ff_videomaster_get_api_info(VideoMasterContext *videomaster_context)
 {
+    int av_error = AVERROR(EIO);
     av_log(videomaster_context->avctx, AV_LOG_TRACE,
            "ff_videomaster_get_api_info: IN\n");
-    int av_error = AVERROR(EIO);
     if (handle_vhd_status(
             videomaster_context->avctx,
             VHD_GetApiInfo(&videomaster_context->api_version,
@@ -1760,10 +1777,10 @@ enum AVVideoMasterChannelType ff_videomaster_get_channel_type_from_index(
 
 int ff_videomaster_get_data(VideoMasterContext *videomaster_context)
 {
+    int lock_slot_status = lock_slot(videomaster_context);
 
     av_log(videomaster_context->avctx, AV_LOG_TRACE,
            "ff_videomaster_get_data: IN\n");
-    int lock_slot_status = lock_slot(videomaster_context);
 
     if (lock_slot_status == AVERROR(EAGAIN))
     {
@@ -1880,9 +1897,6 @@ int ff_videomaster_get_video_stream_properties(
     union VideoMasterVideoInfo *video_info, uint32_t *width, uint32_t *height,
     uint32_t *frame_rate_num, uint32_t *frame_rate_den, bool *interlaced)
 {
-    av_log(avctx, AV_LOG_TRACE,
-           "ff_videomaster_get_video_stream_"
-           "properties: IN\n");
     uint32_t frame_rate = 0;
     uint32_t total_width = 0;
     uint32_t total_height = 0;
@@ -1890,6 +1904,9 @@ int ff_videomaster_get_video_stream_properties(
     *channel_type = ff_videomaster_get_channel_type_from_index(avctx,
                                                                board_handle,
                                                                channel_index);
+    av_log(avctx, AV_LOG_TRACE,
+           "ff_videomaster_get_video_stream_"
+           "properties: IN\n");
 
     if (*channel_type == AV_VIDEOMASTER_CHANNEL_HDMI)
     {
@@ -2109,7 +2126,7 @@ int ff_videomaster_release_data(VideoMasterContext *videomaster_context)
     return unlock_slot(videomaster_context);
 }
 
-char *ff_videomaster_sample_rate_to_string(
+const char *ff_videomaster_sample_rate_to_string(
     enum AVVideoMasterSampleRateValue sample_rate)
 {
     switch (sample_rate)
@@ -2125,7 +2142,7 @@ char *ff_videomaster_sample_rate_to_string(
     }
 }
 
-char *ff_videomaster_sample_size_to_string(
+const char *ff_videomaster_sample_size_to_string(
     enum AVVideoMasterSampleSizeValue sample_size)
 {
     switch (sample_size)
