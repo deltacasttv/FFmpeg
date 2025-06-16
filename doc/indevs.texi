@@ -1495,16 +1495,16 @@ of the SDK (or, again, proper Frameworks path for MacOS).
 
 DELTACAST(c) devices are able to auto-detect video settings (width, height, frame rate)
 and perform video format conversion in YUV 422 10 bits or YUV 422 8 bits in reception.
-Audio can be only receive as PCM data and are not processed if the codec is different.
-The audio settings (sample size, sample rate, number of channels, ...) are also
-detect automaticaly.
+Audio can only be received as PCM data and is not processed if the codec is different.
+The audio settings (sample size, sample rate, number of channels, etc.) are also
+detected automatically.
 
-You can use the DELTACAST(c) device as FFmpeg input in two different way :
+You can use the DELTACAST(c) device as an FFmpeg input in two different ways:
 
 @itemize
 
-@item By using the stream input name return by the @code{-sources} option of FFmepg. 
-The stream input name is generally of the form @code{stream <channel_index> on board <board_index>}.
+@item By using the stream input name returned by the @code{-sources} option of FFmpeg.
+The stream input name is generally in the form @code{stream <channel_index> on board <board_index>}.
 
 @item By using FFmpeg options to select the stream and the board when using a @code{dummy} input.
 
@@ -1545,13 +1545,13 @@ ffmpeg -sources videomaster
 @end example
 
 @item
-Capture video clip from the stream name with the default timestamp source ('osc')
+Capture a video clip from the stream name with the default timestamp source ('osc')
 @example
 ffmpeg -f videomaster -i "stream 0 on board 0" -c:a copy -c:v copy output.avi
 @end example
 
 @item
-Capture video clip from the options using the hardware timestamp source
+Capture a video clip from the options using the hardware timestamp source
 @example
 ffmpeg -channel_index 0 -board_index 0 -timestamp_source hw -f videomaster -i dummy -c:a copy -c:v copy output.avi
 @end example
