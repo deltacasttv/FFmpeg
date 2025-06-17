@@ -1,8 +1,40 @@
-FFmpeg README
-=============
+Videomaster Fork of FFmpeg README
+=================================
 
-FFmpeg is a collection of libraries and tools to process multimedia content
-such as audio, video, subtitles and related metadata.
+FFmpeg is a collection of libraries and tools for processing multimedia content
+such as audio, video, subtitles, and related metadata.
+
+## About This Fork
+
+This repository is a fork of [FFmpeg](https://ffmpeg.org/) with a custom demuxer added to support DELTACAST (c) PCIe capture cards via the VideoMaster SDK.
+The main addition is the `videomaster` input device, which allows FFmpeg to capture video and audio streams directly from supported DELTACAST hardware.
+
+### Building with videomaster Support
+
+To enable the `videomaster` demuxer, configure FFmpeg with the `--enable-videomaster` option in the configure command line.
+
+You must also have the DELTACAST VideoMaster SDK installed and provide the appropriate `--extra-c[xx]flags` to specify the path to the SDK's public headers, and `--extra-ldflags` to specify the path to the SDK libraries.
+
+An example configure command line is:
+
+```sh
+configure --enable-gpl --enable-nonfree --enable-videomaster --extra-cflags="-I../../install/videomaster/win64/include" --extra-cxxflags="-I../../install/videomaster/win64/include" --extra-ldflags="-LIBPATH:../../install/videomaster/win64/lib"
+```
+
+### Usage
+
+Once built, you can use the `videomaster` input device in FFmpeg commands to capture from DELTACAST cards.
+For example:
+
+```sh
+ffmpeg -f videomaster -i "stream 0 on board 0" output.avi
+```
+
+See the [Input Devices documentation](doc/indevs.texi) for detailed usage and options.
+
+### Documentation
+
+Documentation for the `videomaster` demuxer is included in `doc/indevs.texi` and will be available in the compiled documentation.
 
 ## Libraries
 
