@@ -35,6 +35,41 @@
         }                                                                      \
     } while (0)
 
+/** static tables */
+
+/**
+ * @brief VideoMaster buffer packing information.
+ *
+ * This structure holds information about the buffer packing format used
+ * for video streams in the VideoMaster context.
+ */
+typedef struct
+{
+    enum AVVideoMasterBufferPacking buffer_packing;
+    enum AVPixelFormat              pixel_format;
+    int                             bits_per_pixel;
+    int                             bit_rate_num_mul;
+    int                             bit_rate_den_mul;
+    bool                            line_padding_needed;
+} VideoMasterBufferPackingInfo;
+
+static const VideoMasterBufferPackingInfo buffer_packing_info_table[] = {
+    { AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_NV12, AV_PIX_FMT_NV12, 12, 1, 1,
+      false },
+    { AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_P010, AV_PIX_FMT_NV12, 12, 1, 1,
+      false },
+    { AV_VIDEOMASTER_BUFFER_PACKING_RGB_32, AV_PIX_FMT_RGB32, 32, 1, 1, false },
+    { AV_VIDEOMASTER_BUFFER_PACKING_RGBA_32, AV_PIX_FMT_RGBA, 48, 1, 1, false },
+    { AV_VIDEOMASTER_BUFFER_PACKING_RGB_24, AV_PIX_FMT_0RGB32, 24, 1, 1,
+      false },
+    { AV_VIDEOMASTER_BUFFER_PACKING_RGB_64, AV_PIX_FMT_RGBA64, 64, 1, 1,
+      false },
+    { AV_VIDEOMASTER_BUFFER_PACKING_YUV422_8, AV_PIX_FMT_UYVY422, 16, 1, 1,
+      false },
+    { AV_VIDEOMASTER_BUFFER_PACKING_YUV422_10, AV_CODEC_ID_V210, 64, 1, 3,
+      true },
+};
+
 /** static functions declaration **/
 
 /**
@@ -135,17 +170,23 @@ static int get_audio_buffer(VideoMasterContext *videomaster_context);
  * sample size or sample frequency from audio infoframe and aes status for HDMI
  * stream
  *
- * @param videomaster_context  VideoMasterContext pointer to the
- * VideoMasterContext
+ * @param avctx  AVFormatContext pointer to the AVFormatContext
+ * @param board_handle  Handle to the board
+ * @param stream_handle  Handle to the stream
+ * @param channel_index  Index of the channel
+ * @param buffer_packing  The selected buffer packing
  * @param audio_info Pointer to the variable to store the audio information
+ * @param sample_rate  Pointer to the variable to store the sample rate
+ * @param nb_channels  Pointer to the variable to store the number of channels
+ * @param sample_size  Pointer to the variable to store the sample size
  * @param codec  Pointer to the variable to store the codec ID
  * @return int 0 on success, negative AVERROR code on failure
  */
 static int get_audio_stream_properties_from_audio_infoframe(
     AVFormatContext *avctx, HANDLE board_handle, HANDLE stream_handle,
-    uint32_t channel_index, union VideoMasterAudioInfo *audio_info,
-    uint32_t *sample_rate, uint32_t *nb_channels, uint32_t *sample_size,
-    enum AVCodecID *codec);
+    uint32_t channel_index, enum AVVideoMasterBufferPacking buffer_packing,
+    union VideoMasterAudioInfo *audio_info, uint32_t *sample_rate,
+    uint32_t *nb_channels, uint32_t *sample_size, enum AVCodecID *codec);
 
 /**
  * @brief Get the board name from the device identify by the
@@ -173,6 +214,16 @@ static int get_board_name(VideoMasterContext *videomaster_context,
 static int
 get_board_name_and_serial_number(VideoMasterContext *videomaster_context,
                                  char **board_name, char **serial_number);
+
+/**
+ * @brief Get the buffer packing info object
+ *
+ * @param packing AVVideoMasterBufferPacking for whom the info is requested
+ * @return const BufferPackingInfo*
+ */
+const VideoMasterBufferPackingInfo *
+get_buffer_packing_info(enum AVVideoMasterBufferPacking packing);
+
 /**
  * @brief Get the channel binary mask from the number
  * of channel
@@ -448,6 +499,7 @@ int add_device_info_into_list(VideoMasterContext *videomaster_context,
                       videomaster_context->board_handle,
                       videomaster_context->stream_handle,
                       videomaster_context->channel_index,
+                      videomaster_context->video_buffer_packing,
                       &videomaster_context->channel_type,
                       &videomaster_context->audio_info,
                       &videomaster_context->audio_sample_rate,
@@ -747,9 +799,9 @@ int get_audio_buffer(VideoMasterContext *videomaster_context)
 
 int get_audio_stream_properties_from_audio_infoframe(
     AVFormatContext *avctx, HANDLE board_handle, HANDLE stream_handle,
-    uint32_t channel_index, union VideoMasterAudioInfo *audio_info,
-    uint32_t *sample_rate, uint32_t *nb_channels, uint32_t *sample_size,
-    enum AVCodecID *codec)
+    uint32_t channel_index, enum AVVideoMasterBufferPacking buffer_packing,
+    union VideoMasterAudioInfo *audio_info, uint32_t *sample_rate,
+    uint32_t *nb_channels, uint32_t *sample_size, enum AVCodecID *codec)
 {
     VHD_DV_AUDIO_TYPE      audio_type = VHD_DV_AUDIO_TYPE_NONE;
     VHD_DV_AUDIO_INFOFRAME audio_info_frame = { 0 };
@@ -762,6 +814,7 @@ int get_audio_stream_properties_from_audio_infoframe(
         .stream_handle = stream_handle,
         .channel_index = channel_index,
         .channel_type = AV_VIDEOMASTER_CHANNEL_HDMI,
+        .video_buffer_packing = buffer_packing,
     };
 
     VideoMasterContext *videomaster_context = &videomaster_context_struct;
@@ -876,6 +929,19 @@ int get_board_name(VideoMasterContext *videomaster_context,
         return AVERROR(ENOMEM);
     }
     return 0;
+}
+
+const VideoMasterBufferPackingInfo *
+get_buffer_packing_info(enum AVVideoMasterBufferPacking packing)
+{
+    for (size_t i = 0; i < sizeof(buffer_packing_info_table) /
+                               sizeof(buffer_packing_info_table[0]);
+         ++i)
+    {
+        if (buffer_packing_info_table[i].buffer_packing == packing)
+            return &buffer_packing_info_table[i];
+    }
+    return NULL;
 }
 
 int get_channel_mask_from_nb_channels(VideoMasterContext *videomaster_context)
@@ -1706,7 +1772,8 @@ int ff_videomaster_get_api_info(VideoMasterContext *videomaster_context)
 
 int ff_videomaster_get_audio_stream_properties(
     AVFormatContext *avctx, HANDLE board_handle, HANDLE stream_handle,
-    uint32_t channel_index, enum AVVideoMasterChannelType *channel_type,
+    uint32_t channel_index, enum AVVideoMasterBufferPacking buffer_packing,
+    enum AVVideoMasterChannelType *channel_type,
     union VideoMasterAudioInfo *audio_info, uint32_t *sample_rate,
     uint32_t *nb_channels, uint32_t *sample_size, enum AVCodecID *codec)
 {
@@ -1738,8 +1805,8 @@ int ff_videomaster_get_audio_stream_properties(
         GET_AND_CHECK(handle_av_error, avctx, avctx,
                       get_audio_stream_properties_from_audio_infoframe(
                           avctx, board_handle, local_stream_handle,
-                          channel_index, audio_info, sample_rate, nb_channels,
-                          sample_size, codec),
+                          channel_index, buffer_packing, audio_info,
+                          sample_rate, nb_channels, sample_size, codec),
                       "Get audio properties",
                       "Failed to get audio stream "
                       "properties");
@@ -2040,8 +2107,18 @@ int ff_videomaster_get_video_stream_properties(
                               "Failed to close stream "
                               "handle");
         video_info->hdmi.refresh_rate = frame_rate;
-        *frame_rate_num = video_info->hdmi.pixel_clock * 1000;
-        *frame_rate_den = total_width * total_height;
+        uint64_t num = (uint64_t)video_info->hdmi.pixel_clock * 1000;
+        uint64_t den = (uint64_t)total_width * (uint64_t)total_height;
+
+        // Trick to avoid overflow value for 4K format and greater
+        while (num > INT32_MAX || den > INT32_MAX)
+        {
+            num /= 2;
+            den /= 2;
+        }
+
+        *frame_rate_num = (uint32_t)num;
+        *frame_rate_den = (uint32_t)den;
     }
     else
     {
@@ -2273,7 +2350,8 @@ const char *ff_videomaster_sample_size_to_string(
 
 int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
 {
-    int av_error = 0;
+    int                                 av_error = 0;
+    const VideoMasterBufferPackingInfo *info = NULL;
     av_log(videomaster_context->avctx, AV_LOG_TRACE,
            "ff_videomaster_start_stream: IN\n");
 
@@ -2377,54 +2455,64 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
                                             VHD_CORE_SP_TRANSFER_SCHEME,
                                             VHD_TRANSFER_SLAVED),
                       "", "");
-
-    /* If Line padding property is supported,
-     * use V210 Video decoder. Otherwise, use
-     * YUV422 8bits.*/
-    if (VHD_SetStreamProperty(videomaster_context->stream_handle,
-                              VHD_CORE_SP_LINE_PADDING,
-                              128) == VHDERR_INVALIDPROPERTY)
+    if (videomaster_context->video_buffer_packing ==
+        AV_NB_VIDEOMASTER_BUFFER_PACKINGS)
     {
-        av_log(videomaster_context->avctx, AV_LOG_INFO,
-               "Line padding property not "
-               "supported, using YUV422 "
-               "8bits as "
-               "input video format\n");
-        handle_vhd_status(
-            videomaster_context->avctx,
-            VHD_SetStreamProperty(videomaster_context->stream_handle,
-                                  VHD_CORE_SP_BUFFER_PACKING,
-                                  VHD_BUFPACK_VIDEO_YUV422_8),
-            "", "");
-        videomaster_context->video_codec = AV_CODEC_ID_RAWVIDEO;
-        videomaster_context->video_pixel_format = AV_PIX_FMT_UYVY422;
-        videomaster_context->video_bit_rate =
-            av_rescale(videomaster_context->video_width *
-                           videomaster_context->video_height * 16,
-                       videomaster_context->video_frame_rate_num,
-                       videomaster_context->video_frame_rate_den);
+        bool has_line_padding =
+            (VHD_SetStreamProperty(videomaster_context->stream_handle,
+                                   VHD_CORE_SP_LINE_PADDING,
+                                   128) == VHDERR_INVALIDPROPERTY);
+        info = get_buffer_packing_info(
+            has_line_padding ? AV_VIDEOMASTER_BUFFER_PACKING_YUV422_10
+                             : AV_VIDEOMASTER_BUFFER_PACKING_YUV422_8);
     }
     else
     {
-
-        av_log(videomaster_context->avctx, AV_LOG_INFO,
-               "Line padding property "
-               "supported, using YUV422 "
-               "10bits as input "
-               "video format\n");
-        handle_vhd_status(
-            videomaster_context->avctx,
-            VHD_SetStreamProperty(videomaster_context->stream_handle,
-                                  VHD_CORE_SP_BUFFER_PACKING,
-                                  VHD_BUFPACK_VIDEO_YUV422_10),
-            "", "");
-        videomaster_context->video_codec = AV_CODEC_ID_V210;
-        videomaster_context->video_bit_rate =
-            av_rescale(videomaster_context->video_width *
-                           videomaster_context->video_height * 64,
-                       videomaster_context->video_frame_rate_num,
-                       3 * videomaster_context->video_frame_rate_den);
+        info = get_buffer_packing_info(
+            videomaster_context->video_buffer_packing);
     }
+
+    if (!info)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Not implemented video buffer packing: %s\n",
+               VHD_BUFFERPACKING_ToPrettyString(
+                   videomaster_context->video_buffer_packing));
+        return AVERROR(EINVAL);
+    }
+
+    handle_vhd_status(videomaster_context->avctx,
+                      VHD_SetStreamProperty(videomaster_context->stream_handle,
+                                            VHD_CORE_SP_BUFFER_PACKING,
+                                            info->buffer_packing),
+                      "", "");
+
+    videomaster_context->video_codec = AV_CODEC_ID_RAWVIDEO;
+    videomaster_context->video_pixel_format = info->pixel_format;
+    videomaster_context->video_bit_rate = av_rescale(
+        videomaster_context->video_width * videomaster_context->video_height *
+            info->bits_per_pixel,
+        videomaster_context->video_frame_rate_num * info->bit_rate_num_mul,
+        videomaster_context->video_frame_rate_den * info->bit_rate_den_mul);
+
+    if (info->line_padding_needed &&
+
+        VHD_SetStreamProperty(videomaster_context->stream_handle,
+                              VHD_CORE_SP_LINE_PADDING,
+                              128) == VHDERR_INVALIDPROPERTY)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Board does not support line padding property. Unable "
+               "to select %s video buffer packing explictly. Leave the "
+               "option unset or select "
+               "another buffer packing.\n",
+               VHD_BUFFERPACKING_ToPrettyString(info->buffer_packing));
+        return AVERROR(EINVAL);
+    }
+
+    av_log(videomaster_context->avctx, AV_LOG_INFO,
+           "Video buffer packing selected: %s\n",
+           VHD_BUFFERPACKING_ToPrettyString(info->buffer_packing));
 
     // add more delay to get stream and no
     // time-out error
