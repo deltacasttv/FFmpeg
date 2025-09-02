@@ -221,8 +221,18 @@ get_board_name_and_serial_number(VideoMasterContext *videomaster_context,
  * @param packing AVVideoMasterBufferPacking for whom the info is requested
  * @return const BufferPackingInfo*
  */
-const VideoMasterBufferPackingInfo *
+static const VideoMasterBufferPackingInfo *
 get_buffer_packing_info(enum AVVideoMasterBufferPacking packing);
+
+/**
+ * @brief Get the logical buffer packing based on cable bit sampling
+ *
+ * @param cable_bit_sampling Cable bit sampling information
+ * @return const VideoMasterBufferPackingInfo
+ */
+static enum AVVideoMasterBufferPacking
+get_buffer_packing_based_on_cable_bit_sampling(
+    VHD_DV_SAMPLING cable_bit_sampling);
 
 /**
  * @brief Get the channel binary mask from the number
@@ -492,14 +502,19 @@ int add_device_info_into_list(VideoMasterContext *videomaster_context,
              videomaster_context->channel_index,
              videomaster_context->board_index);
 
+    enum AVVideoMasterBufferPacking buffer_packing =
+        ((videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_HDMI)
+             ? get_buffer_packing_based_on_cable_bit_sampling(
+                   videomaster_context->video_info.hdmi.cable_bit_sampling)
+             : AV_VIDEOMASTER_BUFFER_PACKING_YUV422_10);
+
     GET_AND_CHECK(handle_av_error, videomaster_context->avctx,
                   videomaster_context->avctx,
                   ff_videomaster_get_audio_stream_properties(
                       videomaster_context->avctx,
                       videomaster_context->board_handle,
                       videomaster_context->stream_handle,
-                      videomaster_context->channel_index,
-                      videomaster_context->video_buffer_packing,
+                      videomaster_context->channel_index, buffer_packing,
                       &videomaster_context->channel_type,
                       &videomaster_context->audio_info,
                       &videomaster_context->audio_sample_rate,
@@ -942,6 +957,21 @@ get_buffer_packing_info(enum AVVideoMasterBufferPacking packing)
             return &buffer_packing_info_table[i];
     }
     return NULL;
+}
+
+static enum AVVideoMasterBufferPacking
+get_buffer_packing_based_on_cable_bit_sampling(
+    VHD_DV_SAMPLING cable_bit_sampling)
+{
+    switch (cable_bit_sampling)
+    {
+    case VHD_DV_SAMPLING_4_2_0_8BITS:
+        return AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_NV12;
+    case VHD_DV_SAMPLING_4_2_0_10BITS:
+        return AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_P010;
+    default:
+        return AV_VIDEOMASTER_BUFFER_PACKING_YUV422_10;
+    }
 }
 
 int get_channel_mask_from_nb_channels(VideoMasterContext *videomaster_context)
@@ -2107,15 +2137,8 @@ int ff_videomaster_get_video_stream_properties(
                               "Failed to close stream "
                               "handle");
         video_info->hdmi.refresh_rate = frame_rate;
-        uint64_t num_u64 = (uint64_t)video_info->hdmi.pixel_clock;
+        uint64_t num_u64 = (uint64_t)video_info->hdmi.pixel_clock * 1000;
         uint64_t den_u64 = (uint64_t)total_width * (uint64_t)total_height;
-        uint64_t gcd = av_gcd(num_u64, den_u64);
-
-        if (gcd > 1)
-        {
-            num_u64 /= gcd;
-            den_u64 /= gcd;
-        }
 
         // Avoid overflow for large formats
         while (num_u64 > UINT32_MAX || den_u64 > UINT32_MAX)
@@ -2123,8 +2146,6 @@ int ff_videomaster_get_video_stream_properties(
             num_u64 >>= 1;
             den_u64 >>= 1;
         }
-
-        num_u64 *= 1000;
 
         *frame_rate_num = (uint32_t)num_u64;
         *frame_rate_den = (uint32_t)den_u64;
