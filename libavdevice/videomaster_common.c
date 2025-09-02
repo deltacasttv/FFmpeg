@@ -2107,18 +2107,27 @@ int ff_videomaster_get_video_stream_properties(
                               "Failed to close stream "
                               "handle");
         video_info->hdmi.refresh_rate = frame_rate;
-        uint64_t num = (uint64_t)video_info->hdmi.pixel_clock * 1000;
-        uint64_t den = (uint64_t)total_width * (uint64_t)total_height;
+        uint64_t num_u64 = (uint64_t)video_info->hdmi.pixel_clock;
+        uint64_t den_u64 = (uint64_t)total_width * (uint64_t)total_height;
+        uint64_t gcd = av_gcd(num_u64, den_u64);
 
-        // Trick to avoid overflow value for 4K format and greater
-        while (num > INT32_MAX || den > INT32_MAX)
+        if (gcd > 1)
         {
-            num /= 2;
-            den /= 2;
+            num_u64 /= gcd;
+            den_u64 /= gcd;
         }
 
-        *frame_rate_num = (uint32_t)num;
-        *frame_rate_den = (uint32_t)den;
+        // Avoid overflow for large formats
+        while (num_u64 > UINT32_MAX || den_u64 > UINT32_MAX)
+        {
+            num_u64 >>= 1;
+            den_u64 >>= 1;
+        }
+
+        num_u64 *= 1000;
+
+        *frame_rate_num = (uint32_t)num_u64;
+        *frame_rate_den = (uint32_t)den_u64;
     }
     else
     {
