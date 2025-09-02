@@ -770,8 +770,6 @@ int ff_videomaster_list_input_devices(AVFormatContext         *avctx,
     struct VideoMasterData    *videomaster_data = NULL;
     struct VideoMasterContext *videomaster_context = NULL;
 
-    av_log_set_level(AV_LOG_DEBUG);
-
     if (ff_videomaster_extract_context(avctx, &videomaster_data,
                                        &videomaster_context) != 0)
     {
