@@ -1205,12 +1205,9 @@ static const AVOption options[] = {
     {
         "buffer_packing",
         "Specifies the buffer packing format and whether to enable the FPGA's "
-        "color space "
-        "converter "
-        "on the board. If not set, the default buffer packing is YUV422 8-bit "
-        "when the Line "
-        "Padding "
-        "property can be enabled, or YUV422 10-bit otherwise.",
+        "color space converter on the board. If not set, the default buffer "
+        "packing is YUV422 8-bit when the Line Padding  property can be "
+        "enabled, or YUV422 10-bit otherwise.",
         OFFSET(buffer_packing),
         AV_OPT_TYPE_INT64,
         { .i64 = AV_NB_VIDEOMASTER_BUFFER_PACKINGS },
