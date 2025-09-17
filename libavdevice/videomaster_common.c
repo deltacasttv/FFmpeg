@@ -56,7 +56,7 @@ typedef struct
 static const VideoMasterBufferPackingInfo buffer_packing_info_table[] = {
     { AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_NV12, AV_PIX_FMT_NV12, 12, 1, 1,
       false },
-    { AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_P010, AV_PIX_FMT_NV12, 12, 1, 1,
+    { AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_P010, AV_PIX_FMT_P010LE, 24, 1, 1,
       false },
     { AV_VIDEOMASTER_BUFFER_PACKING_RGB_32, AV_PIX_FMT_RGB32, 32, 1, 1, false },
     { AV_VIDEOMASTER_BUFFER_PACKING_RGBA_32, AV_PIX_FMT_RGBA, 48, 1, 1, false },
@@ -2390,14 +2390,6 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
 
     if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_HDMI)
     {
-        /* Set the primary mode of this
-         * channel to HDMI */
-        handle_vhd_status(
-            videomaster_context->avctx,
-            VHD_SetStreamProperty(videomaster_context->stream_handle,
-                                  VHD_DV_SP_MODE, VHD_DV_MODE_HDMI),
-            "", "");
-
         handle_vhd_status(
             videomaster_context->avctx,
             VHD_SetStreamProperty(videomaster_context->stream_handle,
