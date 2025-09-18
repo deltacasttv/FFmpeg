@@ -46,27 +46,74 @@
 typedef struct
 {
     enum AVVideoMasterBufferPacking buffer_packing;
-    enum AVPixelFormat              pixel_format;
-    int                             bits_per_pixel;
-    int                             bit_rate_num_mul;
-    int                             bit_rate_den_mul;
-    bool                            line_padding_needed;
+    bool codec_or_pixel_format;  ///< true if codec ID or pixel format is used
+    union
+    {
+        enum AVPixelFormat pixel_format;
+        enum AVCodecID     codec_id;
+    } format;
+    int  bits_per_pixel;
+    int  bit_rate_num_mul;
+    int  bit_rate_den_mul;
+    bool line_padding_needed;
 } VideoMasterBufferPackingInfo;
 
 static const VideoMasterBufferPackingInfo buffer_packing_info_table[] = {
-    { AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_NV12, AV_PIX_FMT_NV12, 12, 1, 1,
+    { AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_NV12,
+      false,
+      { .pixel_format = AV_PIX_FMT_NV12 },
+      12,
+      1,
+      1,
       false },
-    { AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_P010, AV_PIX_FMT_P010LE, 24, 1, 1,
+    { AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_P010,
+      false,
+      { .pixel_format = AV_PIX_FMT_P010LE },
+      24,
+      1,
+      1,
       false },
-    { AV_VIDEOMASTER_BUFFER_PACKING_RGB_32, AV_PIX_FMT_RGB32, 32, 1, 1, false },
-    { AV_VIDEOMASTER_BUFFER_PACKING_RGBA_32, AV_PIX_FMT_RGBA, 48, 1, 1, false },
-    { AV_VIDEOMASTER_BUFFER_PACKING_RGB_24, AV_PIX_FMT_0RGB32, 24, 1, 1,
+    { AV_VIDEOMASTER_BUFFER_PACKING_RGB_32,
+      false,
+      { .pixel_format = AV_PIX_FMT_BGR0 },
+      32,
+      1,
+      1,
       false },
-    { AV_VIDEOMASTER_BUFFER_PACKING_RGB_64, AV_PIX_FMT_RGBA64, 64, 1, 1,
+    { AV_VIDEOMASTER_BUFFER_PACKING_RGBA_32,
+      false,
+      { .pixel_format = AV_PIX_FMT_BGRA },
+      32,
+      1,
+      1,
       false },
-    { AV_VIDEOMASTER_BUFFER_PACKING_YUV422_8, AV_PIX_FMT_UYVY422, 16, 1, 1,
+    { AV_VIDEOMASTER_BUFFER_PACKING_RGB_24,
+      false,
+      { .pixel_format = AV_PIX_FMT_BGR24 },
+      24,
+      1,
+      1,
       false },
-    { AV_VIDEOMASTER_BUFFER_PACKING_YUV422_10, AV_CODEC_ID_V210, 64, 1, 3,
+    { AV_VIDEOMASTER_BUFFER_PACKING_RGB_64,
+      false,
+      { .pixel_format = AV_PIX_FMT_RGBA64 },
+      64,
+      1,
+      1,
+      false },
+    { AV_VIDEOMASTER_BUFFER_PACKING_YUV422_8,
+      false,
+      { .pixel_format = AV_PIX_FMT_UYVY422 },
+      16,
+      1,
+      1,
+      false },
+    { AV_VIDEOMASTER_BUFFER_PACKING_YUV422_10,
+      true,
+      { .codec_id = AV_CODEC_ID_V210 },
+      64,
+      1,
+      3,
       true },
 };
 
@@ -2508,9 +2555,13 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
                                             VHD_CORE_SP_BUFFER_PACKING,
                                             info->buffer_packing),
                       "", "");
-
-    videomaster_context->video_codec = AV_CODEC_ID_RAWVIDEO;
-    videomaster_context->video_pixel_format = info->pixel_format;
+    if (info->codec_or_pixel_format)
+        videomaster_context->video_codec = info->format.codec_id;
+    else
+    {
+        videomaster_context->video_codec = AV_CODEC_ID_RAWVIDEO;
+        videomaster_context->video_pixel_format = info->format.pixel_format;
+    }
     videomaster_context->video_bit_rate = av_rescale(
         videomaster_context->video_width * videomaster_context->video_height *
             info->bits_per_pixel,
