@@ -2186,6 +2186,13 @@ int ff_videomaster_get_video_stream_properties(
         video_info->hdmi.refresh_rate = frame_rate;
         uint64_t num_u64 = (uint64_t)video_info->hdmi.pixel_clock * 1000;
         uint64_t den_u64 = (uint64_t)total_width * (uint64_t)total_height;
+        uint64_t gcd = av_gcd(num_u64, den_u64);
+
+        if (gcd > 1)
+        {
+            num_u64 /= gcd;
+            den_u64 /= gcd;
+        }
 
         // Avoid overflow for large formats
         while (num_u64 > UINT32_MAX || den_u64 > UINT32_MAX)
