@@ -297,6 +297,15 @@ static int get_serial_number(VideoMasterContext *videomaster_context,
 static int get_video_buffer(VideoMasterContext *videomaster_context);
 
 /**
+ * @brief Get the videomaster enumeration value for timestamp source object
+ *
+ * @param type AVVideoMasterTimeStampType type
+ * @return int The videomaster enumeration value for timestamp source
+ */
+static int get_videomaster_enumeration_value_for_timestamp_source(
+    enum AVVideoMasterTimeStampType type);
+
+/**
  * @brief      Handles AV error codes and logs messages accordingly.
  *
  * This function checks the AV error code and logs a success message if
@@ -402,10 +411,10 @@ int add_device_info_into_list(VideoMasterContext *videomaster_context,
                               char *board_name, char *serial_number,
                               struct AVDeviceInfoList **device_list)
 {
-    char error_msg[128];
-    int  av_error = 0;
-    const char *device_name = NULL;
-    const char *device_description = NULL;
+    char          error_msg[128];
+    int           av_error = 0;
+    const char   *device_name = NULL;
+    const char   *device_description = NULL;
     AVDeviceInfo *new_device = NULL;
     snprintf(error_msg, sizeof(error_msg),
              "Failed to get stream properties for channel %d on board %d",
@@ -447,11 +456,11 @@ int add_device_info_into_list(VideoMasterContext *videomaster_context,
                       &videomaster_context->audio_codec),
                   "", error_msg);
 
-    device_name = format_device_name(videomaster_context,
-                                                 board_name, serial_number);
+    device_name = format_device_name(videomaster_context, board_name,
+                                     serial_number);
 
-    device_description = format_device_description(
-        videomaster_context, board_name, serial_number);
+    device_description = format_device_description(videomaster_context,
+                                                   board_name, serial_number);
     if (!device_name || !device_description)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
@@ -462,10 +471,8 @@ int add_device_info_into_list(VideoMasterContext *videomaster_context,
         return AVERROR(ENOMEM);
     }
 
-    new_device = create_device_info(videomaster_context,
-                                                  (char *)device_name,
-                                                  (char *)device_description,
-                                                  true);
+    new_device = create_device_info(videomaster_context, (char *)device_name,
+                                    (char *)device_description, true);
 
     if (!new_device)
     {
@@ -586,7 +593,7 @@ char *format_device_description(VideoMasterContext *videomaster_context,
                                 const char         *board_name,
                                 const char         *serial_number)
 {
-    char *device_description = av_mallocz(256);
+    char  *device_description = av_mallocz(256);
     double frame_rate = 0.0;
     if (!device_description)
     {
@@ -596,7 +603,7 @@ char *format_device_description(VideoMasterContext *videomaster_context,
     }
 
     frame_rate = (double)videomaster_context->video_frame_rate_num /
-                        videomaster_context->video_frame_rate_den;
+                 videomaster_context->video_frame_rate_den;
     if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_HDMI)
     {
         snprintf(
@@ -906,7 +913,7 @@ int get_codec_from_audio_infoframe_and_aes_status(
     VHD_DV_AUDIO_INFOFRAME audio_info_frame, VHD_DV_AUDIO_AES_STS aes_status,
     enum AVCodecID *codec_id)
 {
-    int return_code = 0;
+    int      return_code = 0;
     uint32_t sample_size = 0;
     switch (audio_info_frame.CodingType)
     {
@@ -1250,6 +1257,24 @@ int get_video_buffer(VideoMasterContext *videomaster_context)
         "Failed to retrieve video slot buffer");
 }
 
+static int get_videomaster_enumeration_value_for_timestamp_source(
+    enum AVVideoMasterTimeStampType type)
+{
+    switch (type)
+    {
+    case AV_VIDEOMASTER_TIMESTAMP_OSCILLATOR:
+        return VHD_ST_CLK_TYPE_MONOTONIC_RAW;
+    case AV_VIDEOMASTER_TIMESTAMP_SYSTEM:
+        return VHD_ST_CLK_TYPE_REALTIME;
+    case AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD:
+        return VHD_TC_SRC_LTC_ONBOARD;
+    case AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD:
+        return VHD_TC_SRC_LTC_COMPANION_CARD;
+    default:
+        return -1;
+    }
+}
+
 int handle_av_error(AVFormatContext *avctx, int av_error,
                     const char *trace_message, const char *error_message)
 {
@@ -1279,8 +1304,8 @@ int handle_vhd_status(AVFormatContext *avctx, VHD_ERRORCODE vhd_status,
     {
         char pLastErrorMessage[VHD_MAX_ERROR_STRING_SIZE] = { 0 };
         VHD_GetLastErrorMessage(pLastErrorMessage, VHD_MAX_ERROR_STRING_SIZE);
-        av_log(avctx, AV_LOG_DEBUG, "VHDERR = %d\n%s\n", vhd_status,
-               pLastErrorMessage);
+        av_log(avctx, AV_LOG_DEBUG, "VHDERR = %d - %s\n%s\n", vhd_status,
+               VHD_ERRORCODE_ToPrettyString(vhd_status), pLastErrorMessage);
         if (strcmp(error_message, "") != 0)
             av_log(avctx, AV_LOG_ERROR, "%s.\n", error_message);
         return AVERROR(EIO);
@@ -1427,13 +1452,12 @@ int interleaved_audio_info_to_audio_buffer(
                      lr_channel++, channel_index++)
                 {
                     src_offset = (sample_index * 2 + lr_channel) *
-                                          bytes_per_sample;
+                                 bytes_per_sample;
                     src_ptr = NULL;
                     if (src && src_offset + bytes_per_sample <= size)
                         src_ptr = src + src_offset;
-                    dst_ptr =
-                        (uint8_t *)videomaster_context->audio_buffer +
-                        dst_offset + channel_index * bytes_per_sample;
+                    dst_ptr = (uint8_t *)videomaster_context->audio_buffer +
+                              dst_offset + channel_index * bytes_per_sample;
                     if (src_ptr)
                         memcpy(dst_ptr, src_ptr, bytes_per_sample);
                 }
@@ -1444,9 +1468,8 @@ int interleaved_audio_info_to_audio_buffer(
                 src_ptr = NULL;
                 if (src && src_offset + bytes_per_sample <= size)
                     src_ptr = src + src_offset;
-                dst_ptr =
-                    (uint8_t *)videomaster_context->audio_buffer + dst_offset +
-                    channel_index * bytes_per_sample;
+                dst_ptr = (uint8_t *)videomaster_context->audio_buffer +
+                          dst_offset + channel_index * bytes_per_sample;
                 if (src_ptr)
                     memcpy(dst_ptr, src_ptr, bytes_per_sample);
                 channel_index++;
@@ -1849,6 +1872,8 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
     int             av_error = 0;
     uint32_t        clock_frequency = 0;
     static uint64_t system_ts_base = 0;
+    VHD_TIMECODE    time_code;
+    float           total_frames = 0;
     if (videomaster_context->slot_handle == NULL)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
@@ -1870,6 +1895,38 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
             "Failed to retrieve hardware "
             "timestamp");
         *timestamp = (*timestamp * 1000000) / clock_frequency;
+        av_log(videomaster_context->avctx, AV_LOG_DEBUG,
+               "Hardware timestamp: %lli\n", *timestamp);
+    }
+    else if (videomaster_context->timestamp_source ==
+                 AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD ||
+             videomaster_context->timestamp_source ==
+                 AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD)
+    {
+        GET_AND_CHECK(
+            handle_vhd_status, videomaster_context->avctx,
+            videomaster_context->avctx,
+            VHD_GetSlotTimecode(
+                videomaster_context->slot_handle,
+                (VHD_TIMECODE_SOURCE)
+                    get_videomaster_enumeration_value_for_timestamp_source(
+                        videomaster_context->timestamp_source),
+                &time_code),
+            "LTC Timestamp retrieved "
+            "successfully",
+            "Failed to retrieve LTC "
+            "timestamp");
+        total_frames = ((time_code.Hour * 3600) + (time_code.Minute * 60) +
+                        time_code.Second) *
+                           videomaster_context->ltc_frame_rate +
+                       time_code.Frame;
+        *timestamp = (uint64_t)((total_frames * 1000000.0) /
+                                videomaster_context->ltc_frame_rate);
+
+        av_log(videomaster_context->avctx, AV_LOG_DEBUG,
+               "Timecode: %02d:%02d:%02d:%02d - Computed timestamp: %lli\n",
+               time_code.Hour, time_code.Minute, time_code.Second,
+               time_code.Frame, *timestamp);
     }
     else
     {
@@ -1886,6 +1943,8 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
         if (system_ts_base == 0)
             system_ts_base = *timestamp;
         *timestamp -= system_ts_base;
+        av_log(videomaster_context->avctx, AV_LOG_DEBUG,
+               "System timestamp: %lli\n", *timestamp);
     }
 
     return 0;
@@ -2061,7 +2120,7 @@ bool ff_videomaster_is_channel_locked(VideoMasterContext *videomaster_context)
     return channel_locked;
 }
 
-bool ff_videomaster_is_hardware_timestamp_is_supported(
+bool ff_videomaster_is_hardware_timestamp_supported(
     VideoMasterContext *videomaster_context)
 {
     bool hardware_timestamp_supported = false;
@@ -2075,6 +2134,62 @@ bool ff_videomaster_is_hardware_timestamp_is_supported(
                "Board handle is missing\n");
     }
     return hardware_timestamp_supported;
+}
+
+bool ff_videomaster_is_ltc_companion_card_present(
+    VideoMasterContext *videomaster_context)
+{
+    bool ltc_companion_card_feature_supported = false;
+    bool ltc_companion_card_present = false;
+    if (videomaster_context->board_handle)
+    {
+        if (ff_videomaster_is_ltc_companion_card_supported(videomaster_context))
+        {
+            VHD_DetectCompanionCard(videomaster_context->board_handle,
+                                    VHD_LTC_COMPANION_CARD,
+                                    (BOOL32 *)&ltc_companion_card_present);
+        }
+    }
+    else
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Board handle is missing\n");
+    }
+
+    return ltc_companion_card_present;
+}
+
+bool ff_videomaster_is_ltc_companion_card_supported(
+    VideoMasterContext *videomaster_context)
+{
+    bool ltc_companion_card_feature_supported = false;
+    if (videomaster_context->board_handle)
+        VHD_GetBoardCapability(videomaster_context->board_handle,
+                               VHD_CORE_BOARD_CAP_LTC_COMPANION_CARD,
+                               (ULONG *)&ltc_companion_card_feature_supported);
+    else
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Board handle is missing\n");
+    }
+    return ltc_companion_card_feature_supported;
+}
+
+bool ff_videomaster_is_ltc_on_board_timestamp_supported(
+    VideoMasterContext *videomaster_context)
+{
+    bool ltc_on_board_timestamp_supported = false;
+    if (videomaster_context->board_handle)
+        VHD_GetBoardCapability(videomaster_context->board_handle,
+                               VHD_CORE_BOARD_CAP_LTC_ONBOARD,
+                               (ULONG *)&ltc_on_board_timestamp_supported);
+    else
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Board handle is missing\n");
+    }
+
+    return ltc_on_board_timestamp_supported;
 }
 
 int ff_videomaster_open_board_handle(VideoMasterContext *videomaster_context)
@@ -2320,16 +2435,32 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
                   "Stream time-out has been set to "
                   "10000ms",
                   "Unable to set stream time-out");
-
-    GET_AND_CHECK(handle_vhd_status, videomaster_context->avctx,
-                  videomaster_context->avctx,
-                  VHD_SetBoardProperty(videomaster_context->board_handle,
-                                       VHD_CORE_BP_SYSTEM_TIME_CLK_TYPE,
-                                       videomaster_context->timestamp_source),
-                  "System time clock type set "
-                  "successfully",
-                  "Failed to set system time clock "
-                  "type");
+    if (videomaster_context->timestamp_source <
+        AV_VIDEOMASTER_TIMESTAMP_HARDWARE)
+        GET_AND_CHECK(
+            handle_vhd_status, videomaster_context->avctx,
+            videomaster_context->avctx,
+            VHD_SetBoardProperty(
+                videomaster_context->board_handle,
+                VHD_CORE_BP_SYSTEM_TIME_CLK_TYPE,
+                get_videomaster_enumeration_value_for_timestamp_source(
+                    videomaster_context->timestamp_source)),
+            "System time clock type set "
+            "successfully",
+            "Failed to set system time clock "
+            "type");
+    else if (videomaster_context->timestamp_source ==
+             AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD)
+    {
+        GET_AND_CHECK(handle_vhd_status, videomaster_context->avctx,
+                      videomaster_context->avctx,
+                      VHD_SetBoardProperty(
+                          videomaster_context->board_handle,
+                          VHD_SDI_BP_BLACKBURST0_DETECTION_ENABLE, FALSE),
+                      "Disable Blackburst detection for LTC on-board signal",
+                      "Failed to disable Blackburst detection for LTC on-board "
+                      "signal");
+    }
 
     GET_AND_CHECK(handle_vhd_status, videomaster_context->avctx,
                   videomaster_context->avctx,
@@ -2363,6 +2494,10 @@ const char *ff_videomaster_timestamp_type_to_string(
         return "system";
     case AV_VIDEOMASTER_TIMESTAMP_HARDWARE:
         return "hw";
+    case AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD:
+        return "ltc_onboard";
+    case AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD:
+        return "ltc_companion";
     default:
         return "unknown";
     }
