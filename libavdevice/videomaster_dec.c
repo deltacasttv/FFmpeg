@@ -184,6 +184,7 @@ int check_audio_properties(VideoMasterContext *videomaster_context)
     }
     return 0;
 }
+
 int check_board_index(VideoMasterContext *videomaster_context)
 {
 
@@ -441,14 +442,122 @@ int check_header_arguments(VideoMasterContext *videomaster_context)
 
 int check_timestamp_source(VideoMasterContext *videomaster_context)
 {
+    VHD_TIMECODE  time_code;
+    BOOL32        ltc_source_is_locked;
+    float         ltc_source_frame_rate;
+    VHD_ERRORCODE error_code;
+
     if (videomaster_context->timestamp_source ==
             AV_VIDEOMASTER_TIMESTAMP_HARDWARE &&
-        !ff_videomaster_is_hardware_timestamp_is_supported(videomaster_context))
+        !ff_videomaster_is_hardware_timestamp_supported(videomaster_context))
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
                "Hardware time stamping is not supported on the device. Please "
                "change the value of timestamp_source.\n");
         return AVERROR(EINVAL);
+    }
+    else if (videomaster_context->timestamp_source ==
+             AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD)
+    {
+        if (!ff_videomaster_is_ltc_companion_card_supported(
+                videomaster_context))
+        {
+            av_log(videomaster_context->avctx, AV_LOG_ERROR,
+                   "LTC companion card feature is not supported on the device. "
+                   "LTC companion card timestamp sources is "
+                   "not available. Please change the value of "
+                   "timestamp_source.\n");
+            return AVERROR(EINVAL);
+        }
+        else
+        {
+            if (!ff_videomaster_is_ltc_companion_card_present(
+                    videomaster_context))
+            {
+                av_log(videomaster_context->avctx, AV_LOG_ERROR,
+                       "LTC companion card is not detected. Please check your "
+                       "hardware configuration or change the value "
+                       "of timestamp_source.\n");
+                return AVERROR(EINVAL);
+            }
+        }
+    }
+    else if (videomaster_context->timestamp_source ==
+             AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD)
+    {
+        if (!ff_videomaster_is_ltc_on_board_timestamp_supported(
+                videomaster_context))
+        {
+            av_log(videomaster_context->avctx, AV_LOG_ERROR,
+                   "LTC on-board feature is not supported on the device. LTC "
+                   "on-board timestamp source is not available. Please change "
+                   "the value of timestamp_source.\n");
+            return AVERROR(EINVAL);
+        }
+    }
+
+    if (videomaster_context->timestamp_source ==
+            AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD ||
+        videomaster_context->timestamp_source ==
+            AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD)
+    {
+        error_code = VHD_GetTimecode(
+            videomaster_context->board_handle,
+            (videomaster_context->timestamp_source ==
+             AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD)
+                ? VHD_TC_SRC_LTC_COMPANION_CARD
+                : VHD_TC_SRC_LTC_ONBOARD,
+            &ltc_source_is_locked, &ltc_source_frame_rate, &time_code);
+        if (error_code == VHDERR_NOERROR)
+        {
+            av_log(videomaster_context->avctx, AV_LOG_DEBUG,
+                   "LTC Time code: %02d:%02d:%02d:%02d\n", time_code.Hour,
+                   time_code.Minute, time_code.Second, time_code.Frame);
+            if (ltc_source_is_locked)
+            {
+                av_log(videomaster_context->avctx, AV_LOG_DEBUG,
+                       "LTC source is locked at %.3f fps.\n",
+                       ltc_source_frame_rate);
+                if (videomaster_context->has_video)
+                {
+                    float video_frame_rate =
+                        (float)videomaster_context->video_frame_rate_num /
+                        videomaster_context->video_frame_rate_den;
+                    if (ltc_source_frame_rate != video_frame_rate)
+                    {
+                        av_log(videomaster_context->avctx, AV_LOG_WARNING,
+                               "LTC frame rate (%.3f fps) does not match "
+                               "video frame rate (%.3f fps). Timecode and pts "
+                               "deduced from it may be "
+                               "incorrect.\n",
+                               ltc_source_frame_rate, video_frame_rate);
+                    }
+                    else
+                    {
+                        videomaster_context->ltc_frame_rate =
+                            ltc_source_frame_rate;
+                    }
+                }
+            }
+            else
+            {
+                av_log(videomaster_context->avctx, AV_LOG_WARNING,
+                       "LTC source is not locked. No timecode will be "
+                       "available until the LTC source is locked.\n");
+            }
+        }
+        else
+        {
+            char pLastErrorMessage[VHD_MAX_ERROR_STRING_SIZE] = { 0 };
+            VHD_GetLastErrorMessage(pLastErrorMessage,
+                                    VHD_MAX_ERROR_STRING_SIZE);
+            av_log(videomaster_context->avctx, AV_LOG_DEBUG,
+                   "VHDERR = %d - %s\n%s\n", error_code,
+                   VHD_ERRORCODE_ToPrettyString(error_code), pLastErrorMessage);
+            av_log(videomaster_context->avctx, AV_LOG_ERROR,
+                   "Cannot get LTC timecode.\n");
+            return AVERROR(EIO);
+        }
     }
     return 0;
 }
@@ -524,12 +633,8 @@ int parse_command_line_arguments(AVFormatContext *avctx)
             }
         }
 
-        if (videomaster_data->timestamp_source ==
-                AV_VIDEOMASTER_TIMESTAMP_OSCILLATOR ||
-            videomaster_data->timestamp_source ==
-                AV_VIDEOMASTER_TIMESTAMP_SYSTEM ||
-            videomaster_data->timestamp_source ==
-                AV_VIDEOMASTER_TIMESTAMP_HARDWARE)
+        if (videomaster_data->timestamp_source >= 0 &&
+            videomaster_data->timestamp_source < AV_VIDEOMASTER_TIMESTAMP_NB)
         {
             videomaster_context->timestamp_source =
                 (enum AVVideoMasterTimeStampType)
@@ -974,6 +1079,26 @@ static const AVOption options[] = {
       0,
       AV_OPT_TYPE_CONST,
       { .i64 = AV_VIDEOMASTER_TIMESTAMP_HARDWARE },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM |
+          AV_OPT_FLAG_AUDIO_PARAM,
+      .unit = "timestamp_source" },
+    { "ltc_on_board",
+      NULL,
+      0,
+      AV_OPT_TYPE_CONST,
+      { .i64 = AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM |
+          AV_OPT_FLAG_AUDIO_PARAM,
+      .unit = "timestamp_source" },
+    { "ltc_companion_card",
+      NULL,
+      0,
+      AV_OPT_TYPE_CONST,
+      { .i64 = AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD },
       0,
       0,
       AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM |

@@ -1521,7 +1521,7 @@ Index of the stream to use. Only required when the ffmpeg input is set to dummy 
 Index of the board to use. Only required when the ffmpeg input is set to dummy (-i dummy). If the input is a source name (from `ffmpeg -sources videomaster`), the board index is automatically deduced from the source name. Must be a non negative integer. An error is displayed if the selected board does not exist or is not detected.
 
 @item timestamp_source
-Selects the source for video frame timestamps. Options are: 'hw' for hardware-based timestamps (highest precision, if supported), 'osc' for the device's internal oscillator, or 'system' for the system clock. Use 'hw' for best synchronization accuracy, 'osc' for stable internal timing, or 'system' for general-purpose timing. Default is 'osc'. An error is displayed if the selected timestamp_source is not supported.
+Selects the source for video frame timestamps. Options are: 'hw' for hardware-based timestamps (highest precision, if supported), 'osc' for the device's internal oscillator, 'system' for the system clock, 'ltc_on_board' to use an LTC signal sending to the board by the black burst connnector or 'lt_companion_card' to use LTC signal sending through a TEB companion card. Without LTC signal, use 'hw' for best synchronization accuracy, 'osc' for stable internal timing, or 'system' for general-purpose timing. Default is 'osc'. An error is displayed if the selected timestamp_source is not supported.
 
 @item nb_channels
 Set the number of audio channels to capture. This option is only used when the input source is an SDI stream. For HDMI streams, the number of channels is automatically detected from the stream properties. Supported values are 1 to 16. If not specified, the default is to use all available channels detected on the SDI stream.
@@ -1554,6 +1554,12 @@ ffmpeg -f videomaster -i "stream 0 on board 0" -c:a copy -c:v copy output.avi
 Capture a video clip from the options using the hardware timestamp source
 @example
 ffmpeg -channel_index 0 -board_index 0 -timestamp_source hw -f videomaster -i dummy -c:a copy -c:v copy output.avi
+@end example
+
+@item
+Capture a video clip from the options using the ltc companion card timestamp source
+@example
+ffmpeg -channel_index 0 -board_index 0 -timestamp_source ltc_companion_card -f videomaster -i dummy -c:a copy -c:v copy output.avi
 @end example
 
 @end itemize

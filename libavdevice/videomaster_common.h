@@ -100,9 +100,11 @@ enum AVVideoMasterSampleSizeValue
  */
 enum AVVideoMasterTimeStampType
 {
-    AV_VIDEOMASTER_TIMESTAMP_OSCILLATOR = VHD_ST_CLK_TYPE_MONOTONIC_RAW,
-    AV_VIDEOMASTER_TIMESTAMP_SYSTEM = VHD_ST_CLK_TYPE_REALTIME,
-    AV_VIDEOMASTER_TIMESTAMP_HARDWARE = NB_VHD_SYSTEM_TIME_CLK_TYPE,
+    AV_VIDEOMASTER_TIMESTAMP_OSCILLATOR,
+    AV_VIDEOMASTER_TIMESTAMP_SYSTEM,
+    AV_VIDEOMASTER_TIMESTAMP_HARDWARE,
+    AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD,
+    AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD,
     AV_VIDEOMASTER_TIMESTAMP_NB
 };
 
@@ -204,6 +206,7 @@ typedef struct VideoMasterContext
 
     bool
         return_video_next;  ///< true if the next video frame should be returned
+    float ltc_frame_rate;   ///< frame rate for LTC timestamp calculation
 
     // audio stream data
     bool           has_audio;    ///< true if the stream has audio data
@@ -367,7 +370,7 @@ int ff_videomaster_get_api_info(VideoMasterContext *videomaster_context);
  */
 int ff_videomaster_get_audio_stream_properties(
     AVFormatContext *avctx, HANDLE board_handle, HANDLE stream_handle,
-    uint32_t channel_index, enum AVVideoMasterChannelType *,
+    uint32_t                    channel_index, enum AVVideoMasterChannelType *,
     union VideoMasterAudioInfo *audio_info, uint32_t *sample_rate,
     uint32_t *nb_channels, uint32_t *sample_size, enum AVCodecID *codec);
 
@@ -511,7 +514,37 @@ bool ff_videomaster_is_channel_locked(VideoMasterContext *videomaster_context);
  * @param videomaster_context The VideoMaster context to use.
  * @return true if hardware timestamping is supported, false otherwise.
  */
-bool ff_videomaster_is_hardware_timestamp_is_supported(
+bool ff_videomaster_is_hardware_timestamp_supported(
+    VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Checks if an LTC companion card is present alongside the VideoMaster
+ * device.
+ *
+ * @param videomaster_context The VideoMaster context to use.
+ * @return true if ltc companion card is present, false otherwise.
+ */
+bool ff_videomaster_is_ltc_companion_card_present(
+    VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Checks if ltc companion card feature is supported by the VideoMaster
+ * device.
+ *
+ * @param videomaster_context The VideoMaster context to use.
+ * @return true if ltc companion card feature is supported, false otherwise.
+ */
+bool ff_videomaster_is_ltc_companion_card_supported(
+    VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Checks if ltc on board timestamping is supported on the VideoMaster
+ * device.
+ *
+ * @param videomaster_context The VideoMaster context to use.
+ * @return true if ltc on board timestamping is supported, false otherwise.
+ */
+bool ff_videomaster_is_ltc_on_board_timestamp_supported(
     VideoMasterContext *videomaster_context);
 
 /**
