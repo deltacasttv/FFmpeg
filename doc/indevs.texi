@@ -1493,8 +1493,9 @@ SDK and you need to configure with appropriate @code{--extra-cflags} to target
 public include directories (or proper Frameworks path for MacOS) and @code{--extra-lfdflags} to target binary directories
 of the SDK (or, again, proper Frameworks path for MacOS).
 
-DELTACAST(c) devices are able to auto-detect video settings (width, height, frame rate)
-and perform video format conversion in YUV 422 10 bits or YUV 422 8 bits in reception.
+DELTACAST(c) devices can automatically detect video settings (width, height, frame rate) and handle 
+video format reception. It is possible to select the reception buffer packing, or use the default behavior, which 
+converts the stream to YUV 4:2:2 10-bit or YUV 4:2:2 8-bit.
 Audio can only be received as PCM data and is not processed if the codec is different.
 The audio settings (sample size, sample rate, number of channels, etc.) are also
 detected automatically.
@@ -1532,6 +1533,9 @@ Set the audio sample size in bits to capture. This option is only used when the 
 @item sample_rate
 Set the audio sample rate in Hz to capture. This option is only used when the input source is an SDI stream. For HDMI streams, the sample rate is automatically detected from the stream properties. Supported values are 32000, 44100, and 48000. If not specified, an error will be displayed.
 
+@item buffer_packing
+Specifies the buffer packing format and whether to enable the FPGA's color space converter on the board. If not set, the default buffer packing is YUV422 10-bit when the Line Padding property can be enabled, or YUV422 8-bit otherwise.
+
 @end table
 
 @subsection Examples
@@ -1553,7 +1557,7 @@ ffmpeg -f videomaster -i "stream 0 on board 0" -c:a copy -c:v copy output.avi
 @item
 Capture a video clip from the options using the hardware timestamp source
 @example
-ffmpeg -channel_index 0 -board_index 0 -timestamp_source hw -f videomaster -i dummy -c:a copy -c:v copy output.avi
+ffmpeg -channel_index 0 -board_index 0 -timestamp_source hw -buffer_packing PLANAR_NV12 -f videomaster -i dummy -c:a copy -c:v copy output.avi
 @end example
 
 @item
