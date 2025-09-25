@@ -744,7 +744,9 @@ char *format_device_description(VideoMasterContext *videomaster_context,
                  "SDI video: %dx%d%s%.3f (interface: %s) on board %s (SN: %s)",
                  videomaster_context->video_width,
                  videomaster_context->video_height,
-                 videomaster_context->video_interlaced ? "i" : "p", frame_rate,
+                 videomaster_context->video_interlaced ? "i" : "p",
+                 videomaster_context->video_interlaced ? frame_rate * 2
+                                                       : frame_rate,
                  interface_str, board_name, serial_number);
     }
 
@@ -2435,6 +2437,7 @@ const char *ff_videomaster_sample_size_to_string(
 int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
 {
     int                                 av_error = 0;
+    int has_field_merge_capability = 0;
     const VideoMasterBufferPackingInfo *info = NULL;
     av_log(videomaster_context->avctx, AV_LOG_TRACE,
            "ff_videomaster_start_stream: IN\n");
@@ -2524,6 +2527,27 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
         if (videomaster_context->has_audio)
             init_audio_info(videomaster_context,
                             &videomaster_context->audio_info.sdi.audio_info);
+    }
+
+    if (videomaster_context->video_interlaced)
+    {
+        handle_vhd_status(
+            videomaster_context->avctx,
+            VHD_GetBoardCapability(videomaster_context->board_handle,
+                                   VHD_CORE_BOARD_CAP_FIELD_MERGING,
+                                   &has_field_merge_capability),
+            "", "");
+        if (has_field_merge_capability)
+            handle_vhd_status(
+                videomaster_context->avctx,
+                VHD_SetStreamProperty(videomaster_context->stream_handle,
+                                      VHD_CORE_SP_FIELD_MERGE, true),
+                "", "Unable to set field merge property for interlaced stream");
+        else
+            av_log(videomaster_context->avctx, AV_LOG_WARNING,
+                   "Field merge not supported on "
+                   "this board, interlaced "
+                   "content might be affected\n");
     }
 
     handle_vhd_status(videomaster_context->avctx,
