@@ -746,14 +746,7 @@ int setup_video_stream(VideoMasterContext *videomaster_context)
         av_stream->codecpar->bit_rate = videomaster_context->video_bit_rate;
         av_stream->codecpar->codec_id = videomaster_context->video_codec;
         av_stream->codecpar->format = videomaster_context->video_pixel_format;
-        if (videomaster_context->video_interlaced)
-        {
-            av_stream->codecpar->field_order = AV_FIELD_TT;
-        }
-        else
-        {
-            av_stream->codecpar->field_order = AV_FIELD_PROGRESSIVE;
-        }
+        av_stream->codecpar->field_order = AV_FIELD_PROGRESSIVE;
 
         avpriv_set_pts_info(av_stream, 64, 1, 1000000); /* 64 bits pts in us */
 
