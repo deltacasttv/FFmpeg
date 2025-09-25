@@ -1493,7 +1493,7 @@ SDK and you need to configure with appropriate @code{--extra-cflags} to target
 public include directories (or proper Frameworks path for MacOS) and @code{--extra-lfdflags} to target binary directories
 of the SDK (or, again, proper Frameworks path for MacOS).
 
-DELTACAST(c) devices devices can automatically detect video settings (width, height, frame rate) and handle 
+DELTACAST(c) devices can automatically detect video settings (width, height, frame rate) and handle 
 video format reception. It is possible to select the reception buffer packing, or use the default behavior, which 
 converts the stream to YUV 4:2:2 10-bit or YUV 4:2:2 8-bit.
 Audio can only be received as PCM data and is not processed if the codec is different.
@@ -1534,7 +1534,7 @@ Set the audio sample size in bits to capture. This option is only used when the 
 Set the audio sample rate in Hz to capture. This option is only used when the input source is an SDI stream. For HDMI streams, the sample rate is automatically detected from the stream properties. Supported values are 32000, 44100, and 48000. If not specified, an error will be displayed.
 
 @item buffer_packing
-Specifies the buffer packing format and whether to enable the FPGA's color space converter on the board. If not set, the default buffer packing is YUV422 8-bit when the Line Padding  property can be enabled, or YUV422 10-bit otherwise.
+Specifies the buffer packing format and whether to enable the FPGA's color space converter on the board. If not set, the default buffer packing is YUV422 10-bit when the Line Padding property can be enabled, or YUV422 8-bit otherwise.
 
 @end table
 
