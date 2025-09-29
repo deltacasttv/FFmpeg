@@ -430,7 +430,8 @@ int ff_videomaster_get_api_info(VideoMasterContext *videomaster_context);
  */
 int ff_videomaster_get_audio_stream_properties(
     AVFormatContext *avctx, HANDLE board_handle, HANDLE stream_handle,
-    uint32_t                    channel_index, enum AVVideoMasterChannelType *,
+    uint32_t channel_index, enum AVVideoMasterBufferPacking buffer_packing,
+    enum AVVideoMasterChannelType *channel_type,
     union VideoMasterAudioInfo *audio_info, uint32_t *sample_rate,
     uint32_t *nb_channels, uint32_t *sample_size, enum AVCodecID *codec);
 
