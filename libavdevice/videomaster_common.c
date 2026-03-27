@@ -334,6 +334,16 @@ static int get_nb_channels_from_audio_infoframe_and_aes_status(
 static VHD_CORE_BOARDPROPERTY get_passive_loopback_property(int channel_index);
 
 /**
+ * @brief Get the RX SDI board property from the given index
+ *
+ * @param index Index of the RX SDI
+ * @return uint32_t The RX SDI board property
+
+ */
+static uint32_t
+get_rx_sdi_board_property_clock_divisor_from_index(uint32_t index);
+
+/**
  * @brief Get the rx stream type Videomaster enumeration from the  channel index
  *
  * @param index Channel Index
@@ -533,7 +543,8 @@ int add_device_info_into_list(VideoMasterContext *videomaster_context,
             &videomaster_context->video_height,
             &videomaster_context->video_frame_rate_num,
             &videomaster_context->video_frame_rate_den,
-            &videomaster_context->video_interlaced),
+            &videomaster_context->video_interlaced,
+            videomaster_context->dual_stream),
         "", error_msg);
 
     snprintf(error_msg, sizeof(error_msg),
@@ -887,7 +898,8 @@ int get_audio_stream_properties_from_audio_infoframe(
             &videomaster_context->video_height,
             &videomaster_context->video_frame_rate_num,
             &videomaster_context->video_frame_rate_den,
-            &videomaster_context->video_interlaced),
+            &videomaster_context->video_interlaced,
+            videomaster_context->dual_stream),
         "Video stream properties retrieved successfully",
         "Could not retrieve video stream properties");
 
@@ -1161,6 +1173,39 @@ int get_nb_channels_from_audio_infoframe_and_aes_status(
         break;
     }
     return return_code;
+}
+
+uint32_t get_rx_sdi_board_property_clock_divisor_from_index(uint32_t index)
+{
+    switch (index)
+    {
+    case 0:
+        return VHD_SDI_BP_RX0_CLOCK_DIV;
+    case 1:
+        return VHD_SDI_BP_RX1_CLOCK_DIV;
+    case 2:
+        return VHD_SDI_BP_RX2_CLOCK_DIV;
+    case 3:
+        return VHD_SDI_BP_RX3_CLOCK_DIV;
+    case 4:
+        return VHD_SDI_BP_RX4_CLOCK_DIV;
+    case 5:
+        return VHD_SDI_BP_RX5_CLOCK_DIV;
+    case 6:
+        return VHD_SDI_BP_RX6_CLOCK_DIV;
+    case 7:
+        return VHD_SDI_BP_RX7_CLOCK_DIV;
+    case 8:
+        return VHD_SDI_BP_RX8_CLOCK_DIV;
+    case 9:
+        return VHD_SDI_BP_RX9_CLOCK_DIV;
+    case 10:
+        return VHD_SDI_BP_RX10_CLOCK_DIV;
+    case 11:
+        return VHD_SDI_BP_RX11_CLOCK_DIV;
+    default:
+        return VHD_SDI_BP_RX0_CLOCK_DIV;
+    }
 }
 
 VHD_STREAMTYPE get_rx_stream_type_from_index(uint32_t index)
@@ -1455,7 +1500,7 @@ int init_audio_info(VideoMasterContext *videomaster_context,
     VHD_AUDIOGROUP   *audio_group = NULL;
     VHD_AUDIOCHANNEL *audio_channel = NULL;
     VHD_AUDIOFORMAT   buffer_format = videomaster_context->audio_sample_size ==
-                                            AV_VIDEOMASTER_SAMPLE_SIZE_16
+                                              AV_VIDEOMASTER_SAMPLE_SIZE_16
                                           ? VHD_AF_16
                                           : VHD_AF_24;
     uint32_t          channel_count = 0;
@@ -2091,7 +2136,8 @@ int ff_videomaster_get_video_stream_properties(
     AVFormatContext *avctx, HANDLE board_handle, HANDLE stream_handle,
     uint32_t channel_index, enum AVVideoMasterChannelType *channel_type,
     union VideoMasterVideoInfo *video_info, uint32_t *width, uint32_t *height,
-    uint32_t *frame_rate_num, uint32_t *frame_rate_den, bool *interlaced)
+    uint32_t *frame_rate_num, uint32_t *frame_rate_den, bool *interlaced,
+    bool dual_stream)
 {
     uint32_t frame_rate = 0;
     uint32_t total_width = 0;
@@ -2199,38 +2245,79 @@ int ff_videomaster_get_video_stream_properties(
     }
     else
     {
-        handle_vhd_status(
-            avctx,
-            VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL, channel_index,
-                                   VHD_SDI_CP_VIDEO_STANDARD,
-                                   (uint32_t *)&video_info->sdi.video_standard),
-            "", "");
+        if (dual_stream)
+        {
+            video_info->sdi.interface = VHD_INTERFACE_3G_B_DS_425_1;
+
+            // must start the stream with correct interface to get auto
+            // detection
+            HANDLE stream_handle = NULL;
+            VHD_OpenStreamHandle(board_handle,
+                                 get_rx_stream_type_from_index(channel_index),
+                                 VHD_SDI_STPROC_JOINED, NULL, &stream_handle,
+                                 NULL);
+            VHD_SetStreamProperty(stream_handle, VHD_SDI_SP_INTERFACE,
+                                  video_info->sdi.interface);
+
+            handle_vhd_status(avctx,
+                              VHD_GetStreamProperty(
+                                  stream_handle, VHD_SDI_SP_VIDEO_STANDARD,
+                                  (uint32_t *)&video_info->sdi.video_standard),
+                              "", "");
+            int status = VHD_StartStream(stream_handle);
+
+            handle_vhd_status(avctx,
+                              VHD_GetStreamProperty(
+                                  stream_handle, VHD_SDI_SP_VIDEO_STANDARD,
+                                  (uint32_t *)&video_info->sdi.video_standard),
+                              "", "");
+
+            handle_vhd_status(
+                avctx,
+                VHD_GetBoardProperty(
+                    board_handle,
+                    get_rx_sdi_board_property_clock_divisor_from_index(
+                        channel_index),
+                    (uint32_t *)&video_info->sdi.clock_divisor),
+                "", "");
+            if (status == VHDERR_NOERROR)
+                VHD_StopStream(stream_handle);
+            VHD_CloseStreamHandle(stream_handle);
+        }
+        else
+        {
+            handle_vhd_status(
+                avctx,
+                VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL,
+                                       channel_index, VHD_SDI_CP_INTERFACE,
+                                       (uint32_t *)&video_info->sdi.interface),
+                "", "");
+            handle_vhd_status(avctx,
+                              VHD_GetChannelProperty(
+                                  board_handle, VHD_RX_CHANNEL, channel_index,
+                                  VHD_SDI_CP_VIDEO_STANDARD,
+                                  (uint32_t *)&video_info->sdi.video_standard),
+                              "", "");
+
+            handle_vhd_status(avctx,
+                              VHD_GetChannelProperty(
+                                  board_handle, VHD_RX_CHANNEL, channel_index,
+                                  VHD_SDI_CP_CLOCK_DIVISOR,
+                                  (uint32_t *)&video_info->sdi.clock_divisor),
+                              "", "");
+
+            handle_vhd_status(
+                avctx,
+                VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL,
+                                       channel_index, VHD_SDI_CP_GENLOCK_OFFSET,
+                                       &video_info->sdi.genlock_offset),
+                "", "");
+        }
         handle_vhd_status(avctx,
                           VHD_GetVideoCharacteristics(
                               video_info->sdi.video_standard, width, height,
                               (BOOL32 *)interlaced, &frame_rate),
                           "", "");
-
-        handle_vhd_status(
-            avctx,
-            VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL, channel_index,
-                                   VHD_SDI_CP_CLOCK_DIVISOR,
-                                   (uint32_t *)&video_info->sdi.clock_divisor),
-            "", "");
-
-        handle_vhd_status(
-            avctx,
-            VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL, channel_index,
-                                   VHD_SDI_CP_INTERFACE,
-                                   (uint32_t *)&video_info->sdi.interface),
-            "", "");
-
-        handle_vhd_status(
-            avctx,
-            VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL, channel_index,
-                                   VHD_SDI_CP_GENLOCK_OFFSET,
-                                   &video_info->sdi.genlock_offset),
-            "", "");
 
         *frame_rate_num = frame_rate * 1000;
         switch (video_info->sdi.clock_divisor)
@@ -2253,6 +2340,29 @@ int ff_videomaster_get_video_stream_properties(
            "ff_videomaster_get_video_stream_"
            "properties: OUT\n");
     return 0;
+}
+
+bool ff_videomaster_is_3g_b_ds_interface_supported(
+    VideoMasterContext *videomaster_context)
+{
+    bool                          interface_supported = false;
+    enum AVVideoMasterChannelType channel_type =
+        ff_videomaster_get_channel_type_from_index(
+            videomaster_context->avctx, videomaster_context->board_handle,
+            videomaster_context->channel_index);
+    if (videomaster_context->board_handle &&
+        channel_type == AV_VIDEOMASTER_CHANNEL_SDI)
+        VHD_GetBoardCapSDIInterface(videomaster_context->board_handle,
+                                    get_rx_stream_type_from_index(
+                                        videomaster_context->channel_index),
+                                    VHD_INTERFACE_3G_B_DS_425_1,
+                                    (BOOL32 *)&interface_supported);
+    else
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Board handle is missing or channel type is not SDI\n");
+    }
+    return interface_supported;
 }
 
 bool ff_videomaster_is_channel_locked(VideoMasterContext *videomaster_context)
@@ -2428,7 +2538,7 @@ const char *ff_videomaster_sample_size_to_string(
 int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
 {
     int                                 av_error = 0;
-    int has_field_merge_capability = 0;
+    int                                 has_field_merge_capability = 0;
     const VideoMasterBufferPackingInfo *info = NULL;
     av_log(videomaster_context->avctx, AV_LOG_TRACE,
            "ff_videomaster_start_stream: IN\n");

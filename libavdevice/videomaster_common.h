@@ -234,7 +234,9 @@ typedef struct VideoMasterContext
     enum AVVideoMasterChannelType
         channel_type;  ///< type of the channel (HDMI or SDI)
     enum AVVideoMasterTimeStampType
-        timestamp_source;  ///< source of the timestamp
+         timestamp_source;  ///< source of the timestamp
+    bool dual_stream;  ///< true if the stream must be configured with 3GB-DS
+                       ///< interface
 
     uint32_t api_version;       ///< API version
     uint32_t number_of_boards;  ///< number of boards detected
@@ -318,6 +320,8 @@ typedef struct VideoMasterData
     int64_t sample_rate;       ///< sample rate of the audio stream
     int64_t sample_size;       ///< bits per sample in the audio stream
     int64_t buffer_packing;    ///< buffer packing format
+    bool    dual_stream;  ///< true if the stream must be configured with 3GB-DS
+                          ///< interface
 } VideoMasterData;
 
 /**
@@ -546,6 +550,8 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
  * @param frame_rate_den Pointer to store the denominator of the frame rate of
  * the video stream.
  * @param interlaced Pointer to store whether the video stream is interlaced.
+ * @param dual_stream Indicates whether the stream must be configured with 3G B
+ * DS interface instead of auto-detect one.
  *
  * @return 0 on success, or a negative AVERROR code on failure.
  */
@@ -553,7 +559,17 @@ int ff_videomaster_get_video_stream_properties(
     AVFormatContext *avctx, HANDLE board_handle, HANDLE stream_handle,
     uint32_t channel_index, enum AVVideoMasterChannelType *channel_type,
     union VideoMasterVideoInfo *video_info, uint32_t *width, uint32_t *height,
-    uint32_t *frame_rate_num, uint32_t *frame_rate_den, bool *interlaced);
+    uint32_t *frame_rate_num, uint32_t *frame_rate_den, bool *interlaced,
+    bool dual_stream);
+
+/**
+ * @brief Checks if 3G-B DS interface is supported on the VideoMaster device.
+ *
+ * @param videomaster_context The VideoMaster context to use.
+ * @return true if 3G-B DS interface is supported, false otherwise.
+ */
+bool ff_videomaster_is_3g_b_ds_interface_supported(
+    VideoMasterContext *videomaster_context);
 
 /**
  * @brief Checks if the channel is locked on the VideoMaster device.
@@ -611,8 +627,8 @@ bool ff_videomaster_is_ltc_on_board_timestamp_supported(
  * @brief Opens a handle to the VideoMaster board.
  *
  * This function initializes and opens a handle to the VideoMaster board
- * specified by the board index board_index in the provided VideoMaster context.
- * The handle is used for subsequent operations on the board.
+ * specified by the board index board_index in the provided VideoMaster
+ * context. The handle is used for subsequent operations on the board.
  *
  * @param videomaster_context The VideoMaster context to use.
  * @return 0 on success, or negative AVERROR code on failure:

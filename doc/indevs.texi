@@ -1536,6 +1536,9 @@ Set the audio sample rate in Hz to capture. This option is only used when the in
 @item buffer_packing
 Specifies the buffer packing format and whether to enable the FPGA's color space converter on the board. If not set, the default buffer packing is YUV422 10-bit when the Line Padding property can be enabled, or YUV422 8-bit otherwise.
 
+@item dual_stream
+Force the 3G-B dual stream interface when it cannot be auto-detected. A 3G Level B-DS stream received on the RX0 physical connector is split into two independent streams: one RX0 stream receives the A link and one RX1 stream receives the B link. When enabled, FFmpeg expects the two streams to be provided on consecutive channels (RX0 for the A link, RX1 for the B link). This option is only relevant for SDI 3G Level B-DS signals. An error is displayed if the selected board and channel do not support the 3G-B dual stream interface. Accepted values are @option{1} (or @option{true}) to enable dual stream mode, and @option{0} (or @option{false}) to disable it. Default is @option{false}.
+
 @end table
 
 @subsection Examples
@@ -1564,6 +1567,12 @@ ffmpeg -channel_index 0 -board_index 0 -timestamp_source hw -buffer_packing PLAN
 Capture a video clip from the options using the ltc companion card timestamp source
 @example
 ffmpeg -channel_index 0 -board_index 0 -timestamp_source ltc_companion_card -f videomaster -i dummy -c:a copy -c:v copy output.avi
+@end example
+
+@item
+Capture a 3G Level B-DS dual stream signal received on RX0/RX1 of board 0
+@example
+ffmpeg -f videomaster -board_index 0 -channel_index 0 -dual_stream 1 -i dummy -c:a copy -c:v copy output.avi
 @end example
 
 @end itemize

@@ -24,7 +24,6 @@
 #endif
 
 #define OFFSET(x) offsetof(struct VideoMasterData, x)
-#define DEC       AV_OPT_FLAG_DECODING_PARAM
 
 /** Static function declaration */
 /**
@@ -218,6 +217,30 @@ int check_board_index(VideoMasterContext *videomaster_context)
     return 0;
 }
 
+int check_dual_stream(VideoMasterContext *videomaster_context)
+{
+    if (videomaster_context->dual_stream &&
+        !ff_videomaster_is_3g_b_ds_interface_supported(videomaster_context))
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "3G-B DS interface is not supported on this device and for this "
+               "channel. Dual-stream "
+               "mode cannot be enabled.\n");
+        return AVERROR(EINVAL);
+    }
+    else if (videomaster_context->dual_stream)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "3G-B Dual-Stream interface enabled\n");
+    }
+    else
+    {
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "3G-B Dual-Stream interface disabled\n");
+    }
+    return 0;
+}
+
 int check_channel_index(VideoMasterContext *videomaster_context)
 {
     videomaster_context->has_video = false;
@@ -233,7 +256,8 @@ int check_channel_index(VideoMasterContext *videomaster_context)
                    videomaster_context->channel_index);
             return AVERROR(EINVAL);
         }
-        else if (!ff_videomaster_is_channel_locked(videomaster_context))
+        else if (!ff_videomaster_is_channel_locked(videomaster_context) &&
+                 !videomaster_context->dual_stream)
         {
             av_log(videomaster_context->avctx, AV_LOG_TRACE,
                    "Channel %d is not locked\n",
@@ -255,7 +279,8 @@ int check_channel_index(VideoMasterContext *videomaster_context)
                     &videomaster_context->video_height,
                     &videomaster_context->video_frame_rate_num,
                     &videomaster_context->video_frame_rate_den,
-                    &videomaster_context->video_interlaced) == 0)
+                    &videomaster_context->video_interlaced,
+                    videomaster_context->dual_stream) == 0)
             {
                 videomaster_context->has_video = true;
                 float frame_rate =
@@ -410,7 +435,6 @@ int check_channel_index(VideoMasterContext *videomaster_context)
 
 int check_header_arguments(VideoMasterContext *videomaster_context)
 {
-
     if (check_board_index(videomaster_context) != 0)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
@@ -422,6 +446,15 @@ int check_header_arguments(VideoMasterContext *videomaster_context)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
                "Failed to check audio properties integrity\n");
+        ff_videomaster_close_board_handle(videomaster_context);
+        return AVERROR(EIO);
+    }
+
+    if (check_dual_stream(videomaster_context) != 0)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Failed to check dual-stream integrity\n");
+        ff_videomaster_close_stream_handle(videomaster_context);
         ff_videomaster_close_board_handle(videomaster_context);
         return AVERROR(EIO);
     }
@@ -670,6 +703,7 @@ int parse_command_line_arguments(AVFormatContext *avctx)
 
         videomaster_context->video_buffer_packing =
             videomaster_data->buffer_packing;
+        videomaster_context->dual_stream = videomaster_data->dual_stream;
     }
 
     av_log(avctx, AV_LOG_INFO,
@@ -1028,7 +1062,7 @@ static const AVOption options[] = {
       { .i64 = -1 },
       -1,
       INT_MAX,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM |
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM |
           AV_OPT_FLAG_AUDIO_PARAM,
       NULL },
     { "channel_index",
@@ -1041,7 +1075,7 @@ static const AVOption options[] = {
       { .i64 = -1 },
       -1,
       INT_MAX,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM |
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM |
           AV_OPT_FLAG_AUDIO_PARAM,
       NULL },
     { "timestamp_source",
@@ -1055,7 +1089,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_TIMESTAMP_OSCILLATOR },
       AV_VIDEOMASTER_TIMESTAMP_OSCILLATOR,
       AV_VIDEOMASTER_TIMESTAMP_NB - 1,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM |
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM |
           AV_OPT_FLAG_AUDIO_PARAM,
       .unit = "timestamp_source" },
     { "osc",
@@ -1065,7 +1099,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_TIMESTAMP_OSCILLATOR },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM |
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM |
           AV_OPT_FLAG_AUDIO_PARAM,
       .unit = "timestamp_source" },
     { "system",
@@ -1075,7 +1109,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_TIMESTAMP_SYSTEM },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM |
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM |
           AV_OPT_FLAG_AUDIO_PARAM,
       .unit = "timestamp_source" },
     { "hw",
@@ -1085,7 +1119,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_TIMESTAMP_HARDWARE },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM |
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM |
           AV_OPT_FLAG_AUDIO_PARAM,
       .unit = "timestamp_source" },
     { "ltc_on_board",
@@ -1095,7 +1129,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM |
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM |
           AV_OPT_FLAG_AUDIO_PARAM,
       .unit = "timestamp_source" },
     { "ltc_companion_card",
@@ -1105,7 +1139,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM |
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM |
           AV_OPT_FLAG_AUDIO_PARAM,
       .unit = "timestamp_source" },
     { "nb_channels",
@@ -1118,7 +1152,7 @@ static const AVOption options[] = {
       { .i64 = -1 },
       -1,
       INT_MAX,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_AUDIO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
       NULL },
     {
         "sample_rate",
@@ -1131,7 +1165,7 @@ static const AVOption options[] = {
         { .i64 = AV_VIDEOMASTER_SAMPLE_RATE_UNKNOWN },
         AV_VIDEOMASTER_SAMPLE_RATE_UNKNOWN,
         AV_VIDEOMASTER_SAMPLE_RATE_48000,
-        AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_AUDIO_PARAM,
+        AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
         .unit = "sample_rate_value",
     },
     { "48000",
@@ -1141,7 +1175,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_SAMPLE_RATE_48000 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_AUDIO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
       .unit = "sample_rate_value" },
     { "44100",
       NULL,
@@ -1150,7 +1184,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_SAMPLE_RATE_44100 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_AUDIO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
       .unit = "sample_rate_value" },
     { "32000",
       NULL,
@@ -1159,7 +1193,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_SAMPLE_RATE_32000 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_AUDIO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
       .unit = "sample_rate_value" },
     {
         "sample_size",
@@ -1173,7 +1207,7 @@ static const AVOption options[] = {
         { .i64 = AV_VIDEOMASTER_SAMPLE_SIZE_UNKNOWN },
         AV_VIDEOMASTER_SAMPLE_SIZE_UNKNOWN,
         AV_VIDEOMASTER_SAMPLE_SIZE_24,
-        AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_AUDIO_PARAM,
+        AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
         .unit = "sample_size_value",
     },
     { "16",
@@ -1183,7 +1217,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_SAMPLE_SIZE_16 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_AUDIO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
       .unit = "sample_size_value" },
     { "24",
       NULL,
@@ -1192,7 +1226,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_SAMPLE_SIZE_24 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_AUDIO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
       .unit = "sample_size_value" },
     {
         "buffer_packing",
@@ -1205,7 +1239,7 @@ static const AVOption options[] = {
         { .i64 = AV_NB_VIDEOMASTER_BUFFER_PACKINGS },
         0,
         AV_NB_VIDEOMASTER_BUFFER_PACKINGS,
-        AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+        AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
         .unit = "buffer_packing_value",
     },
     { "YUV422_8",
@@ -1215,7 +1249,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_YUV422_8 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "YUVK4224_8",
       NULL,
@@ -1224,7 +1258,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_YUVK4224_8 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "YUV422_10",
       NULL,
@@ -1233,7 +1267,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_YUV422_10 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "YUVK4224_10",
       NULL,
@@ -1242,7 +1276,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_YUVK4224_10 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "YUV4444_8",
       NULL,
@@ -1251,7 +1285,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_YUV4444_8 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "YUVK4444_8",
       NULL,
@@ -1260,7 +1294,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_YUVK4444_8 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "YUV444_10",
       NULL,
@@ -1269,7 +1303,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_YUV444_10 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "YUVK4444_10",
       NULL,
@@ -1278,7 +1312,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_YUVK4444_10 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "RGB_32",
       NULL,
@@ -1287,7 +1321,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_RGB_32 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "RGBA_32",
       NULL,
@@ -1296,7 +1330,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_RGBA_32 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "RGB_24",
       NULL,
@@ -1305,7 +1339,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_RGB_24 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "PLANAR_YVU420_8",
       NULL,
@@ -1314,7 +1348,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_YVU420_8 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "PLANAR_YUV420_8",
       NULL,
@@ -1323,7 +1357,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_YUV420_8 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "PLANAR_YVU420_10_MSB_PAD",
       NULL,
@@ -1332,7 +1366,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_YVU420_10_MSB_PAD },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "PLANAR_YVU420_10_LSB_PAD",
       NULL,
@@ -1341,7 +1375,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_YVU420_10_LSB_PAD },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "PLANAR_YUV420_10_MSB_PAD",
       NULL,
@@ -1350,7 +1384,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_YUV420_10_MSB_PAD },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "PLANAR_YUV420_10_LSB_PAD",
       NULL,
@@ -1359,7 +1393,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_YUV420_10_LSB_PAD },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "RGB_64",
       NULL,
@@ -1368,7 +1402,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_RGB_64 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "YUV422_16",
       NULL,
@@ -1377,7 +1411,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_YUV422_16 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "YUV444_8",
       NULL,
@@ -1386,7 +1420,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_YUV444_8 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "ICTCP_422_8",
       NULL,
@@ -1395,7 +1429,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_ICTCP_422_8 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "ICTCP_422_10",
       NULL,
@@ -1404,7 +1438,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_ICTCP_422_10 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "PLANAR_YUV422_10_LSB_PAD",
       NULL,
@@ -1413,7 +1447,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_YUV422_10_LSB_PAD },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "PLANAR_YUV422_10_MSB_PAD",
       NULL,
@@ -1422,7 +1456,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_YUV422_10_MSB_PAD },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "PLANAR_YVU422_10_LSB_PAD",
       NULL,
@@ -1431,7 +1465,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_YVU422_10_LSB_PAD },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "PLANAR_YVU422_10_MSB_PAD",
       NULL,
@@ -1440,7 +1474,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_YVU422_10_MSB_PAD },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "PLANAR_YUV422_8",
       NULL,
@@ -1449,7 +1483,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_YUV422_8 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "PLANAR_YVU422_8",
       NULL,
@@ -1458,7 +1492,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_YVU422_8 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "PLANAR_YUV422_10_NOPAD_BIGEND",
       NULL,
@@ -1467,7 +1501,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_YUV422_10_NOPAD_BIGEND },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "PLANAR_PALETTE_RGBA_8",
       NULL,
@@ -1476,7 +1510,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_PALETTE_RGBA_8 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "PLANAR_NV12",
       NULL,
@@ -1485,7 +1519,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_NV12 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "PLANAR_RGB444_10_LSB_PAD",
       NULL,
@@ -1494,7 +1528,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_RGB444_10_LSB_PAD },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "RGBA4444_10_LSB_PAD",
       NULL,
@@ -1503,7 +1537,7 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_RGBA4444_10_LSB_PAD },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "RGBA4444_16",
       NULL,
@@ -1512,8 +1546,20 @@ static const AVOption options[] = {
       { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_RGBA4444_16 },
       0,
       0,
-      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
+    { "dual_stream",
+      "Force 3GB dual stream interface (that cannot be auto-detect). A 3G "
+      "Level B-DS stream received on the RX0 physicla connector is received by "
+      "two independant streams: one RX0 stream received the A link and one RX1 "
+      "stream received the B link.",
+      OFFSET(dual_stream),
+      AV_OPT_TYPE_BOOL,
+      { .i64 = 0 },
+      0,
+      1,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
+      NULL },
     { NULL },
 };
 
