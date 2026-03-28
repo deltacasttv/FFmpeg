@@ -334,10 +334,10 @@ static int get_nb_channels_from_audio_infoframe_and_aes_status(
 static VHD_CORE_BOARDPROPERTY get_passive_loopback_property(int channel_index);
 
 /**
- * @brief Get the RX SDI board property from the given index
+ * @brief Get the RX SDI clock divisor board property from the given index
  *
- * @param index Index of the RX SDI
- * @return uint32_t The RX SDI board property
+ * @param index Index of the RX SDI channel
+ * @return uint32_t The RX SDI clock divisor board property
 
  */
 static uint32_t
@@ -518,7 +518,7 @@ static int release_audio_info(VideoMasterContext *videomaster_context,
                               VHD_AUDIOINFO      *audio_info);
 
 /** static functions definitions **/
-int add_device_info_into_list(VideoMasterContext *videomaster_context,
+static int add_device_info_into_list(VideoMasterContext *videomaster_context,
                               char *board_name, char *serial_number,
                               struct AVDeviceInfoList **device_list)
 {
@@ -630,7 +630,7 @@ int add_device_info_into_list(VideoMasterContext *videomaster_context,
     return av_error;
 }
 
-AVDeviceInfo *create_device_info(VideoMasterContext *videomaster_context,
+static AVDeviceInfo *create_device_info(VideoMasterContext *videomaster_context,
                                  char *device_name, char *device_description,
                                  bool is_video)
 {
@@ -661,7 +661,7 @@ AVDeviceInfo *create_device_info(VideoMasterContext *videomaster_context,
     return device_info;
 }
 
-int disable_loopback_on_channel(VideoMasterContext *videomaster_context)
+static int disable_loopback_on_channel(VideoMasterContext *videomaster_context)
 {
     uint32_t has_passive_loopback = false;
     uint32_t has_active_loopback = false;
@@ -707,7 +707,7 @@ int disable_loopback_on_channel(VideoMasterContext *videomaster_context)
     return 0;
 }
 
-char *format_device_description(VideoMasterContext *videomaster_context,
+static char *format_device_description(VideoMasterContext *videomaster_context,
                                 const char         *board_name,
                                 const char         *serial_number)
 {
@@ -757,7 +757,7 @@ char *format_device_description(VideoMasterContext *videomaster_context,
     return device_description;
 }
 
-char *format_device_name(VideoMasterContext *videomaster_context,
+static char *format_device_name(VideoMasterContext *videomaster_context,
                          const char *board_name, const char *serial_number)
 {
     char *device_name = av_mallocz(256);
@@ -773,7 +773,7 @@ char *format_device_name(VideoMasterContext *videomaster_context,
     return device_name;
 }
 
-VHD_CORE_BOARDPROPERTY get_active_loopback_property(int channel_index)
+static VHD_CORE_BOARDPROPERTY get_active_loopback_property(int channel_index)
 {
     switch (channel_index)
     {
@@ -784,7 +784,7 @@ VHD_CORE_BOARDPROPERTY get_active_loopback_property(int channel_index)
     }
 }
 
-int get_audio_buffer(VideoMasterContext *videomaster_context)
+static int get_audio_buffer(VideoMasterContext *videomaster_context)
 {
 
     VHD_DV_AUDIO_TYPE      audio_type;
@@ -865,7 +865,7 @@ int get_audio_buffer(VideoMasterContext *videomaster_context)
     return 0;
 }
 
-int get_audio_stream_properties_from_audio_infoframe(
+static int get_audio_stream_properties_from_audio_infoframe(
     AVFormatContext *avctx, HANDLE board_handle, HANDLE stream_handle,
     uint32_t channel_index, enum AVVideoMasterBufferPacking buffer_packing,
     union VideoMasterAudioInfo *audio_info, uint32_t *sample_rate,
@@ -965,7 +965,7 @@ int get_audio_stream_properties_from_audio_infoframe(
     return av_error;
 }
 
-int get_board_name_and_serial_number(VideoMasterContext *videomaster_context,
+static int get_board_name_and_serial_number(VideoMasterContext *videomaster_context,
                                      char **board_name, char **serial_number)
 {
     int av_error = 0;
@@ -986,7 +986,7 @@ int get_board_name_and_serial_number(VideoMasterContext *videomaster_context,
     return 0;
 }
 
-int get_board_name(VideoMasterContext *videomaster_context,
+static int get_board_name(VideoMasterContext *videomaster_context,
                    uint32_t board_index, char **board_name)
 {
     const char *local_board_name = VHD_GetBoardModel(board_index);
@@ -1000,7 +1000,7 @@ int get_board_name(VideoMasterContext *videomaster_context,
     return 0;
 }
 
-const VideoMasterBufferPackingInfo *
+static const VideoMasterBufferPackingInfo *
 get_buffer_packing_info(enum AVVideoMasterBufferPacking packing)
 {
     for (size_t i = 0; i < sizeof(buffer_packing_info_table) /
@@ -1026,7 +1026,7 @@ get_buffer_packing_based_on_cable_bit_sampling(
     }
 }
 
-int get_channel_mask_from_nb_channels(VideoMasterContext *videomaster_context)
+static int get_channel_mask_from_nb_channels(VideoMasterContext *videomaster_context)
 {
     switch (videomaster_context->audio_nb_channels)
     {
@@ -1056,7 +1056,7 @@ int get_channel_mask_from_nb_channels(VideoMasterContext *videomaster_context)
     }
 }
 
-int get_codec_from_audio_infoframe_and_aes_status(
+static int get_codec_from_audio_infoframe_and_aes_status(
     VideoMasterContext    *videomaster_context,
     VHD_DV_AUDIO_INFOFRAME audio_info_frame, VHD_DV_AUDIO_AES_STS aes_status,
     enum AVCodecID *codec_id)
@@ -1119,7 +1119,7 @@ int get_codec_from_audio_infoframe_and_aes_status(
     return return_code;
 }
 
-VHD_CORE_BOARDPROPERTY get_firmware_loopback_property(int channel_index)
+static VHD_CORE_BOARDPROPERTY get_firmware_loopback_property(int channel_index)
 {
     switch (channel_index)
     {
@@ -1131,7 +1131,8 @@ VHD_CORE_BOARDPROPERTY get_firmware_loopback_property(int channel_index)
         return NB_VHD_CORE_BOARDPROPERTIES;
     }
 }
-int get_nb_channels_from_audio_infoframe_and_aes_status(
+
+static int get_nb_channels_from_audio_infoframe_and_aes_status(
     VideoMasterContext    *videomaster_context,
     VHD_DV_AUDIO_INFOFRAME audio_info_frame, VHD_DV_AUDIO_AES_STS aes_status,
     uint32_t *nb_channels)
@@ -1175,7 +1176,7 @@ int get_nb_channels_from_audio_infoframe_and_aes_status(
     return return_code;
 }
 
-uint32_t get_rx_sdi_board_property_clock_divisor_from_index(uint32_t index)
+static uint32_t get_rx_sdi_board_property_clock_divisor_from_index(uint32_t index)
 {
     switch (index)
     {
@@ -1208,7 +1209,7 @@ uint32_t get_rx_sdi_board_property_clock_divisor_from_index(uint32_t index)
     }
 }
 
-VHD_STREAMTYPE get_rx_stream_type_from_index(uint32_t index)
+static VHD_STREAMTYPE get_rx_stream_type_from_index(uint32_t index)
 {
     switch (index)
     {
@@ -1241,7 +1242,7 @@ VHD_STREAMTYPE get_rx_stream_type_from_index(uint32_t index)
     }
 }
 
-VHD_CORE_BOARDPROPERTY get_passive_loopback_property(int channel_index)
+static VHD_CORE_BOARDPROPERTY get_passive_loopback_property(int channel_index)
 {
     switch (channel_index)
     {
@@ -1257,7 +1258,7 @@ VHD_CORE_BOARDPROPERTY get_passive_loopback_property(int channel_index)
         return NB_VHD_CORE_BOARDPROPERTIES;
     }
 }
-int get_sample_rate_from_audio_infoframe_and_aes_status(
+static int get_sample_rate_from_audio_infoframe_and_aes_status(
     VideoMasterContext    *videomaster_context,
     VHD_DV_AUDIO_INFOFRAME audio_info_frame, VHD_DV_AUDIO_AES_STS aes_status,
     uint32_t *sample_rate)
@@ -1330,7 +1331,7 @@ int get_sample_rate_from_audio_infoframe_and_aes_status(
     return return_code;
 }
 
-int get_sample_size_from_audio_infoframe_and_aes_status(
+static int get_sample_size_from_audio_infoframe_and_aes_status(
     VideoMasterContext    *videomaster_context,
     VHD_DV_AUDIO_INFOFRAME audio_info_frame, VHD_DV_AUDIO_AES_STS aes_status,
     uint32_t *sample_size)
@@ -1376,7 +1377,7 @@ int get_sample_size_from_audio_infoframe_and_aes_status(
     return return_code;
 }
 
-int get_serial_number(VideoMasterContext *videomaster_context,
+static int get_serial_number(VideoMasterContext *videomaster_context,
                       HANDLE board_handle, char **serial_number)
 {
     uint32_t       serial_number_array[4] = { 0, 0, 0, 0 };
@@ -1417,7 +1418,7 @@ int get_serial_number(VideoMasterContext *videomaster_context,
     return 0;
 }
 
-int get_video_buffer(VideoMasterContext *videomaster_context)
+static int get_video_buffer(VideoMasterContext *videomaster_context)
 {
     uint32_t video_buffer_type = VHD_DV_BT_VIDEO;
 
@@ -1456,7 +1457,7 @@ static int get_videomaster_enumeration_value_for_timestamp_source(
     }
 }
 
-int handle_av_error(AVFormatContext *avctx, int av_error,
+static int handle_av_error(AVFormatContext *avctx, int av_error,
                     const char *trace_message, const char *error_message)
 {
     if (av_error == 0 && strcmp(trace_message, "") != 0)
@@ -1470,7 +1471,7 @@ int handle_av_error(AVFormatContext *avctx, int av_error,
     return av_error;
 }
 
-int handle_vhd_status(AVFormatContext *avctx, VHD_ERRORCODE vhd_status,
+static int handle_vhd_status(AVFormatContext *avctx, VHD_ERRORCODE vhd_status,
                       const char *success_message, const char *error_message)
 {
     if (vhd_status == VHDERR_NOERROR && strcmp(success_message, "") != 0)
@@ -1494,7 +1495,7 @@ int handle_vhd_status(AVFormatContext *avctx, VHD_ERRORCODE vhd_status,
     return 0;
 }
 
-int init_audio_info(VideoMasterContext *videomaster_context,
+static int init_audio_info(VideoMasterContext *videomaster_context,
                     VHD_AUDIOINFO      *audio_info)
 {
     VHD_AUDIOGROUP   *audio_group = NULL;
@@ -1548,7 +1549,7 @@ int init_audio_info(VideoMasterContext *videomaster_context,
     return 0;
 }
 
-int interleaved_audio_info_to_audio_buffer(
+static int interleaved_audio_info_to_audio_buffer(
     VideoMasterContext *videomaster_context, VHD_AUDIOINFO *audio_info,
     uint8_t **audio_buffer, uint32_t *audio_buffer_size)
 {
@@ -1661,7 +1662,7 @@ int interleaved_audio_info_to_audio_buffer(
     return 0;
 }
 
-int lock_slot(VideoMasterContext *videomaster_context)
+static int lock_slot(VideoMasterContext *videomaster_context)
 {
     return handle_vhd_status(
         videomaster_context->avctx,
@@ -1670,7 +1671,7 @@ int lock_slot(VideoMasterContext *videomaster_context)
         "Slot handle locked successfully", "Failed to lock slot handle");
 }
 
-int unlock_slot(VideoMasterContext *videomaster_context)
+static int unlock_slot(VideoMasterContext *videomaster_context)
 {
     int return_code = 0;
     if (videomaster_context->slot_handle)
@@ -1685,7 +1686,7 @@ int unlock_slot(VideoMasterContext *videomaster_context)
     return return_code;
 }
 
-int release_audio_info(VideoMasterContext *videomaster_context,
+static int release_audio_info(VideoMasterContext *videomaster_context,
                        VHD_AUDIOINFO      *audio_info)
 {
     if (audio_info == NULL)
@@ -2251,24 +2252,30 @@ int ff_videomaster_get_video_stream_properties(
 
             // must start the stream with correct interface to get auto
             // detection
-            HANDLE stream_handle = NULL;
-            VHD_OpenStreamHandle(board_handle,
-                                 get_rx_stream_type_from_index(channel_index),
-                                 VHD_SDI_STPROC_JOINED, NULL, &stream_handle,
-                                 NULL);
-            VHD_SetStreamProperty(stream_handle, VHD_SDI_SP_INTERFACE,
+            if (local_stream_handle == NULL)
+                handle_vhd_status(avctx,
+                                VHD_OpenStreamHandle(
+                                    board_handle,
+                                    get_rx_stream_type_from_index(channel_index),
+                                    VHD_SDI_STPROC_JOINED, NULL,
+                                    &local_stream_handle, NULL),
+                                "Stream handle opened "
+                                "successfully",
+                                "Failed to open stream "
+                                "handle");
+            VHD_SetStreamProperty(local_stream_handle, VHD_SDI_SP_INTERFACE,
                                   video_info->sdi.interface);
 
             handle_vhd_status(avctx,
                               VHD_GetStreamProperty(
-                                  stream_handle, VHD_SDI_SP_VIDEO_STANDARD,
+                                  local_stream_handle, VHD_SDI_SP_VIDEO_STANDARD,
                                   (uint32_t *)&video_info->sdi.video_standard),
                               "", "");
-            int status = VHD_StartStream(stream_handle);
+            int status = VHD_StartStream(local_stream_handle);
 
             handle_vhd_status(avctx,
                               VHD_GetStreamProperty(
-                                  stream_handle, VHD_SDI_SP_VIDEO_STANDARD,
+                                  local_stream_handle, VHD_SDI_SP_VIDEO_STANDARD,
                                   (uint32_t *)&video_info->sdi.video_standard),
                               "", "");
 
@@ -2281,8 +2288,8 @@ int ff_videomaster_get_video_stream_properties(
                     (uint32_t *)&video_info->sdi.clock_divisor),
                 "", "");
             if (status == VHDERR_NOERROR)
-                VHD_StopStream(stream_handle);
-            VHD_CloseStreamHandle(stream_handle);
+                VHD_StopStream(local_stream_handle);
+            VHD_CloseStreamHandle(local_stream_handle);
         }
         else
         {

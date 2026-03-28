@@ -1550,8 +1550,8 @@ static const AVOption options[] = {
       .unit = "buffer_packing_value" },
     { "dual_stream",
       "Force 3GB dual stream interface (that cannot be auto-detect). A 3G "
-      "Level B-DS stream received on the RX0 physicla connector is received by "
-      "two independant streams: one RX0 stream received the A link and one RX1 "
+      "Level B-DS stream received on the RX0 physical connector is received by "
+      "two independent streams: one RX0 stream received the A link and one RX1 "
       "stream received the B link.",
       OFFSET(dual_stream),
       AV_OPT_TYPE_BOOL,
