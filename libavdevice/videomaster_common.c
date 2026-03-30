@@ -1208,8 +1208,6 @@ static int get_rx_sdi_board_property_clock_divisor_from_index(uint32_t index)
     case 11:
         return VHD_SDI_BP_RX11_CLOCK_DIV;
     default:
-        av_log(NULL, AV_LOG_ERROR,
-               "Unsupported channel index for SDI clock divisor: %u\n", index);
         return -1;
     }
 }
@@ -2214,7 +2212,7 @@ int ff_videomaster_get_video_stream_properties(
         if (av_status != 0)
         {
             av_log(avctx, AV_LOG_ERROR,
-                   "Failed to open stream handle for HDMI channel u\n",
+                   "Failed to open stream handle for HDMI channel %u\n",
                    channel_index);
             return av_status;
         }

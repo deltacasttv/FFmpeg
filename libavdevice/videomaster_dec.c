@@ -1574,7 +1574,7 @@ static const AVOption options[] = {
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "dual_stream",
-      "Force 3GB dual stream interface (that cannot be auto-detected). A 3G "
+      "Force 3G-B dual stream interface (that cannot be auto-detected). A 3G "
       "Level B-DS stream received on the RX0 physical connector is split into "
       "two independent streams: one RX0 stream receives the A link and one RX1 "
       "stream receives the B link.",
