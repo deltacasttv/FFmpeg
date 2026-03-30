@@ -2150,6 +2150,7 @@ int ff_videomaster_get_video_stream_properties(
     uint32_t total_width = 0;
     uint32_t total_height = 0;
     HANDLE   local_stream_handle = stream_handle;
+    int      av_status = 0;
     *channel_type = ff_videomaster_get_channel_type_from_index(avctx,
                                                                board_handle,
                                                                channel_index);
@@ -2159,18 +2160,6 @@ int ff_videomaster_get_video_stream_properties(
 
     if (*channel_type == AV_VIDEOMASTER_CHANNEL_HDMI)
     {
-
-        if (local_stream_handle == NULL)
-            handle_vhd_status(avctx,
-                              VHD_OpenStreamHandle(
-                                  board_handle,
-                                  get_rx_stream_type_from_index(channel_index),
-                                  VHD_DV_STPROC_JOINED, NULL,
-                                  &local_stream_handle, NULL),
-                              "Stream handle opened "
-                              "successfully",
-                              "Failed to open stream "
-                              "handle");
         handle_vhd_status(avctx,
                           VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL,
                                                  channel_index,
@@ -2212,6 +2201,23 @@ int ff_videomaster_get_video_stream_properties(
                               VHD_DV_CP_CABLE_BIT_SAMPLING,
                               (uint32_t *)&video_info->hdmi.cable_bit_sampling),
                           "", "");
+        if (local_stream_handle == NULL)
+            av_status = handle_vhd_status(
+                avctx,
+                VHD_OpenStreamHandle(
+                    board_handle, get_rx_stream_type_from_index(channel_index),
+                    VHD_DV_STPROC_JOINED, NULL, &local_stream_handle, NULL),
+                "Stream handle opened "
+                "successfully",
+                "Failed to open stream "
+                "handle");
+        if (av_status != 0)
+        {
+            av_log(avctx, AV_LOG_ERROR,
+                   "Failed to open stream handle for HDMI channel %d\n",
+                   channel_index);
+            return av_status;
+        }
         handle_vhd_status(avctx,
                           VHD_GetStreamProperty(local_stream_handle,
                                                 VHD_DV_SP_TOTAL_WIDTH,
@@ -2279,7 +2285,7 @@ int ff_videomaster_get_video_stream_properties(
             VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL, channel_index,
                                    VHD_SDI_CP_VIDEO_STANDARD,
                                    (uint32_t *)&video_info->sdi.video_standard),
-            "", "");
+            "", "Failed to get SDI video standard from channel properties");
 
         if (video_info->sdi.video_standard == NB_VHD_VIDEOSTANDARDS)
         {
@@ -2287,17 +2293,19 @@ int ff_videomaster_get_video_stream_properties(
             {
                 av_log(
                     avctx, AV_LOG_ERROR,
-                    "Cannot auto-detect video standard for SDI stream. Maybe "
-                    "consider to enable dual stream mode if this is the chosen "
-                    "interface from the input stream ?.\n If not, please "
-                    "contact DELTACAST.TV support.\n");
+                    "Cannot auto-detect the video standard for the SDI stream. "
+                    "If this is the chosen interface for the input stream, "
+                    "consider enabling dual-stream mode (3G_B_DS_425_1 "
+                    "interface). If this does not resolve the issue, please "
+                    "contact DELTACAST.TV support for further assistance.\n");
                 return AVERROR(EIO);
             }
 
             video_info->sdi.interface = VHD_INTERFACE_3G_B_DS_425_1;
 
             if (local_stream_handle == NULL)
-                handle_vhd_status(
+            {
+                av_status = handle_vhd_status(
                     avctx,
                     VHD_OpenStreamHandle(board_handle, stream_type,
                                          VHD_SDI_STPROC_JOINED, NULL,
@@ -2307,24 +2315,44 @@ int ff_videomaster_get_video_stream_properties(
                     "Failed to open stream "
                     "handle");
 
-            handle_vhd_status(avctx,
-                              VHD_SetStreamProperty(local_stream_handle,
-                                                    VHD_SDI_SP_INTERFACE,
-                                                    video_info->sdi.interface),
-                              "",
-                              "Failed to set VHD_INTERFACE_3G_B_DS_425_1 "
-                              "interface on stream handle");
+                handle_vhd_status(avctx,
+                                  VHD_SetStreamProperty(
+                                      local_stream_handle, VHD_SDI_SP_INTERFACE,
+                                      video_info->sdi.interface),
+                                  "",
+                                  "Failed to set VHD_INTERFACE_3G_B_DS_425_1 "
+                                  "interface on stream handle");
+
+                if (av_status != 0)
+                {
+                    av_log(avctx, AV_LOG_ERROR,
+                           "Failed to open stream handle for SDI channel %d in "
+                           "dual stream mode to get video properties\n",
+                           channel_index);
+                    return av_status;
+                }
+
+                av_status = handle_vhd_status(
+                    avctx, VHD_StartStream(local_stream_handle), "",
+                    "Failed to start stream to detect video properties");
+
+                if (av_status != 0)
+                {
+                    av_log(avctx, AV_LOG_ERROR,
+                           "Failed to start stream for SDI channel %d in dual "
+                           "stream mode to get video properties\n",
+                           channel_index);
+                    VHD_CloseStreamHandle(local_stream_handle);
+                    return av_status;
+                }
+            }
 
             handle_vhd_status(
-                avctx, VHD_StartStream(local_stream_handle), "",
-                "Failed to start stream to detect video properties");
-
-            handle_vhd_status(avctx,
-                              VHD_GetStreamProperty(
-                                  local_stream_handle,
-                                  VHD_SDI_SP_VIDEO_STANDARD,
-                                  (uint32_t *)&video_info->sdi.video_standard),
-                              "", "");
+                avctx,
+                VHD_GetStreamProperty(
+                    local_stream_handle, VHD_SDI_SP_VIDEO_STANDARD,
+                    (uint32_t *)&video_info->sdi.video_standard),
+                "", "Failed to get SDI video standard from stream properties");
 
             if (video_info->sdi.video_standard == NB_VHD_VIDEOSTANDARDS)
             {
@@ -2342,6 +2370,17 @@ int ff_videomaster_get_video_stream_properties(
                                   board_handle, board_property_clock_divisor,
                                   (uint32_t *)&video_info->sdi.clock_divisor),
                               "", "");
+            if (video_info->sdi.clock_divisor == NB_VHD_CLOCKDIVISORS)
+            {
+                av_log(avctx, AV_LOG_ERROR,
+                       "Unsupported clock divisor retrieved from board "
+                       "properties for SDI channel %d\n",
+                       channel_index);
+                VHD_StopStream(local_stream_handle);
+                if (stream_handle == NULL)
+                    VHD_CloseStreamHandle(local_stream_handle);
+                return AVERROR(EIO);
+            }
 
             handle_vhd_status(avctx, VHD_StopStream(local_stream_handle), "",
                               "Failed to stop stream");
@@ -2369,13 +2408,6 @@ int ff_videomaster_get_video_stream_properties(
                                   VHD_SDI_CP_CLOCK_DIVISOR,
                                   (uint32_t *)&video_info->sdi.clock_divisor),
                               "", "");
-
-            handle_vhd_status(
-                avctx,
-                VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL,
-                                       channel_index, VHD_SDI_CP_GENLOCK_OFFSET,
-                                       &video_info->sdi.genlock_offset),
-                "", "");
         }
         handle_vhd_status(avctx,
                           VHD_GetVideoCharacteristics(
@@ -2415,12 +2447,22 @@ bool ff_videomaster_is_3g_b_ds_interface_supported(
         ff_videomaster_get_channel_type_from_index(
             videomaster_context->avctx, videomaster_context->board_handle,
             videomaster_context->channel_index);
+    int stream_type = get_rx_stream_type_from_index(
+        videomaster_context->channel_index);
+
+    if (stream_type == NB_VHD_STREAMTYPES)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Unsupported channel index %d for SDI "
+               "stream type\n",
+               videomaster_context->channel_index);
+        return false;
+    }
+
     if (videomaster_context->board_handle &&
         channel_type == AV_VIDEOMASTER_CHANNEL_SDI)
         VHD_GetBoardCapSDIInterface(videomaster_context->board_handle,
-                                    get_rx_stream_type_from_index(
-                                        videomaster_context->channel_index),
-                                    VHD_INTERFACE_3G_B_DS_425_1,
+                                    stream_type, VHD_INTERFACE_3G_B_DS_425_1,
                                     (BOOL32 *)&interface_supported);
     else
     {

@@ -33,7 +33,7 @@
  * context
  * @return int  0 on success, or negative AVERROR code on failure
  */
-int check_audio_properties(VideoMasterContext *videomaster_context);
+static int check_audio_properties(VideoMasterContext *videomaster_context);
 
 /**
  * @brief Checks the integrity of the board index argument in the
@@ -366,9 +366,6 @@ static int check_channel_integrity(VideoMasterContext *videomaster_context)
                        "Interface: %s\n",
                        VHD_INTERFACE_ToPrettyString(
                            videomaster_context->video_info.sdi.interface));
-                av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                       "Genlock offset: %d\n",
-                       videomaster_context->video_info.sdi.genlock_offset);
             }
 
             if (ff_videomaster_open_stream_handle(videomaster_context) == 0)
@@ -1577,10 +1574,10 @@ static const AVOption options[] = {
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
     { "dual_stream",
-      "Force 3GB dual stream interface (that cannot be auto-detect). A 3G "
-      "Level B-DS stream received on the RX0 physical connector is received by "
-      "two independent streams: one RX0 stream received the A link and one RX1 "
-      "stream received the B link.",
+      "Force 3GB dual stream interface (that cannot be auto-detected). A 3G "
+      "Level B-DS stream received on the RX0 physical connector is split into "
+      "two independent streams: one RX0 stream receives the A link and one RX1 "
+      "stream receives the B link.",
       OFFSET(dual_stream),
       AV_OPT_TYPE_BOOL,
       { .i64 = 0 },

@@ -184,7 +184,6 @@ union VideoMasterVideoInfo
         video_standard;                  ///< video standard of the video stream
         VHD_CLOCKDIVISOR clock_divisor;  ///< clock divisor for the video stream
         VHD_INTERFACE    interface;      ///< interface type of the video stream
-        uint32_t genlock_offset;  ///< genlock offset for the video stream
     } sdi;
 };
 
@@ -320,7 +319,7 @@ typedef struct VideoMasterData
     int64_t sample_rate;       ///< sample rate of the audio stream
     int64_t sample_size;       ///< bits per sample in the audio stream
     int64_t buffer_packing;    ///< buffer packing format
-    bool    dual_stream;  ///< true if the stream must be configured with 3GB-DS
+    int64_t dual_stream;  ///< 0/1 if the stream must be configured with 3GB-DS
                           ///< interface
 } VideoMasterData;
 
@@ -551,7 +550,7 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
  * the video stream.
  * @param interlaced Pointer to store whether the video stream is interlaced.
  * @param dual_stream Indicates whether the stream must be configured with 3G B
- * DS interface instead of auto-detect one.
+ * DS interface instead of using auto-detection.
  *
  * @return 0 on success, or a negative AVERROR code on failure.
  */
