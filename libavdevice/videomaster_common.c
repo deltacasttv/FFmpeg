@@ -2289,6 +2289,7 @@ int ff_videomaster_get_video_stream_properties(
                    "Failed to get total width from stream properties for "
                    "HDMI channel %u\n",
                    channel_index);
+            VHD_CloseStreamHandle(local_stream_handle);
             return av_status;
         }
 
@@ -2303,6 +2304,7 @@ int ff_videomaster_get_video_stream_properties(
                    "Failed to get total height from stream properties for "
                    "HDMI channel %u\n",
                    channel_index);
+            VHD_CloseStreamHandle(local_stream_handle);
             return av_status;
         }
 
@@ -2634,7 +2636,7 @@ bool ff_videomaster_is_3g_b_ds_interface_supported(
         else
         {
             av_log(videomaster_context->avctx, AV_LOG_ERROR,
-                   "Board handle is missing or channel type is not SDI\n");
+                   "Channel type is not SDI\n");
         }
     }
     else
