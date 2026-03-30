@@ -2360,23 +2360,15 @@ int ff_videomaster_get_video_stream_properties(
             return AVERROR(EINVAL);
         }
 
-        if ((av_status = handle_vhd_status(
-                 avctx,
-                 VHD_GetChannelProperty(
-                     board_handle, VHD_RX_CHANNEL, channel_index,
-                     VHD_SDI_CP_VIDEO_STANDARD,
-                     (uint32_t *)&video_info->sdi.video_standard),
-                 "",
-                 "Failed to get SDI video standard from channel properties")) !=
-            0)
-        {
-            av_log(
-                avctx, AV_LOG_ERROR,
-                "Failed to get SDI video standard from channel properties for "
-                "SDI channel %u\n",
-                channel_index);
-            return av_status;
-        }
+        // Ignore return value because, dependending on the interface, some
+        // error could be returned but the video standard could still be
+        // retrieved from the stream properties (for dual stream mode)
+        handle_vhd_status(
+            avctx,
+            VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL, channel_index,
+                                   VHD_SDI_CP_VIDEO_STANDARD,
+                                   (uint32_t *)&video_info->sdi.video_standard),
+            "", "");
 
         if (video_info->sdi.video_standard == NB_VHD_VIDEOSTANDARDS)
         {
