@@ -45,6 +45,15 @@ int check_audio_properties(VideoMasterContext *videomaster_context);
 static int check_board_index(VideoMasterContext *videomaster_context);
 
 /**
+ * @brief Checks the integrity of the channel index argument in the
+ * VideoMaster context.
+ * @param videomaster_context VideoMasterContext pointer to the VideoMaster
+ * context
+ * @return int  0 on success, or negative AVERROR code on failure
+ */
+static int check_channel_index(VideoMasterContext *videomaster_context);
+
+/**
  * @brief Checks the integrity of the channel
  * index argument in the VideoMaster context. Calling this function may
  * override audio_nb_channels, audio_sample_rate, and audio_sample_size.
@@ -55,7 +64,17 @@ static int check_board_index(VideoMasterContext *videomaster_context);
  * @return int  0 on success, or negative AVERROR
  * code on failure
  */
-static int check_channel_index(VideoMasterContext *videomaster_context);
+static int check_channel_integrity(VideoMasterContext *videomaster_context);
+
+/**
+ * @brief  Checks if the dual-stream mode can be enabled based on the device
+ * capabilities
+ *
+ * @param videomaster_context VideoMasterContext pointer to the VideoMaster
+ * context
+ * @return int  0 on success, or negative AVERROR code on failure
+ */
+static int check_dual_stream(VideoMasterContext *videomaster_context);
 
 /**
  * @brief Checks the integrity of all arguments passed in the FFmpeg
@@ -146,7 +165,7 @@ static int setup_streams(VideoMasterContext *videomaster_context);
 static int setup_video_stream(VideoMasterContext *videomaster_context);
 
 /**** Static functions definitions */
-int check_audio_properties(VideoMasterContext *videomaster_context)
+static int check_audio_properties(VideoMasterContext *videomaster_context)
 {
     enum AVVideoMasterChannelType channel_type =
         ff_videomaster_get_channel_type_from_index(
@@ -184,7 +203,7 @@ int check_audio_properties(VideoMasterContext *videomaster_context)
     return 0;
 }
 
-int check_board_index(VideoMasterContext *videomaster_context)
+static int check_board_index(VideoMasterContext *videomaster_context)
 {
 
     if (videomaster_context->number_of_boards == 0)
@@ -217,7 +236,7 @@ int check_board_index(VideoMasterContext *videomaster_context)
     return 0;
 }
 
-int check_dual_stream(VideoMasterContext *videomaster_context)
+static int check_dual_stream(VideoMasterContext *videomaster_context)
 {
     if (videomaster_context->dual_stream &&
         !ff_videomaster_is_3g_b_ds_interface_supported(videomaster_context))
@@ -241,11 +260,8 @@ int check_dual_stream(VideoMasterContext *videomaster_context)
     return 0;
 }
 
-int check_channel_index(VideoMasterContext *videomaster_context)
+static int check_channel_index(VideoMasterContext *videomaster_context)
 {
-    videomaster_context->has_video = false;
-    videomaster_context->has_audio = false;
-
     if (ff_videomaster_get_nb_rx_channels(videomaster_context) == 0)
     {
         if (videomaster_context->channel_index >=
@@ -256,172 +272,9 @@ int check_channel_index(VideoMasterContext *videomaster_context)
                    videomaster_context->channel_index);
             return AVERROR(EINVAL);
         }
-        else if (!ff_videomaster_is_channel_locked(videomaster_context) &&
-                 !videomaster_context->dual_stream)
-        {
-            av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                   "Channel %d is not locked\n",
-                   videomaster_context->channel_index);
-            return 0;
-        }
-        else
-        {
-            av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                   "Channel index is valid\n");
-            if (ff_videomaster_get_video_stream_properties(
-                    videomaster_context->avctx,
-                    videomaster_context->board_handle,
-                    videomaster_context->stream_handle,
-                    videomaster_context->channel_index,
-                    &videomaster_context->channel_type,
-                    &videomaster_context->video_info,
-                    &videomaster_context->video_width,
-                    &videomaster_context->video_height,
-                    &videomaster_context->video_frame_rate_num,
-                    &videomaster_context->video_frame_rate_den,
-                    &videomaster_context->video_interlaced,
-                    videomaster_context->dual_stream) == 0)
-            {
-                videomaster_context->has_video = true;
-                float frame_rate =
-                    (float)videomaster_context->video_frame_rate_num /
-                    videomaster_context->video_frame_rate_den;
-                if (videomaster_context->channel_type ==
-                    AV_VIDEOMASTER_CHANNEL_HDMI)
-                {
-                    av_log(
-                        videomaster_context->avctx, AV_LOG_TRACE,
-                        "Stream properties: %dx%d@%.3f %s %s\n",
-                        videomaster_context->video_width,
-                        videomaster_context->video_height, frame_rate,
-                        VHD_DV_CS_ToPrettyString(
-                            videomaster_context->video_info.hdmi.color_space),
-                        VHD_DV_SAMPLING_ToPrettyString(
-                            videomaster_context->video_info.hdmi
-                                .cable_bit_sampling));
-                    av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                           "Pixel clock: %d\n",
-                           videomaster_context->video_info.hdmi.pixel_clock);
-                    av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                           "Interlaced: %s\n",
-                           videomaster_context->video_interlaced ? "true"
-                                                                 : "false");
-                    av_log(
-                        videomaster_context->avctx, AV_LOG_TRACE,
-                        "Color space: %s\n",
-                        VHD_DV_CS_ToPrettyString(
-                            videomaster_context->video_info.hdmi.color_space));
-                    av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                           "Cable bit sampling: %s\n",
-                           VHD_DV_SAMPLING_ToPrettyString(
-                               videomaster_context->video_info.hdmi
-                                   .cable_bit_sampling));
-                    av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                           "Selected Buffer Packing: %s\n",
-                           VHD_BUFFERPACKING_ToPrettyString(
-                               videomaster_context->video_buffer_packing));
-                }
-                else
-                {
-                    av_log(
-                        videomaster_context->avctx, AV_LOG_TRACE,
-                        "Stream properties: %dx%d@%.3f %s %s\n",
-                        videomaster_context->video_width,
-                        videomaster_context->video_height, frame_rate,
-                        VHD_VIDEOSTANDARD_ToPrettyString(
-                            videomaster_context->video_info.sdi.video_standard),
-                        VHD_CLOCKDIVISOR_ToPrettyString(
-                            videomaster_context->video_info.sdi.clock_divisor));
-                    av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                           "Interface: %s\n",
-                           VHD_INTERFACE_ToPrettyString(
-                               videomaster_context->video_info.sdi.interface));
-                    av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                           "Genlock offset: %d\n",
-                           videomaster_context->video_info.sdi.genlock_offset);
-                }
 
-                if (ff_videomaster_open_stream_handle(videomaster_context) == 0)
-                {
-                    av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                           "Stream handle opened successfully\n");
-                }
-                else
-                {
-                    av_log(videomaster_context->avctx, AV_LOG_ERROR,
-                           "Failed to open stream handle.\n");
-                    return AVERROR(EIO);
-                }
-            }
-            else
-            {
-                av_log(videomaster_context->avctx, AV_LOG_ERROR,
-                       "Failed to get stream properties\n");
-                return AVERROR(EIO);
-            }
-
-            if (ff_videomaster_get_audio_stream_properties(
-                    videomaster_context->avctx,
-                    videomaster_context->board_handle,
-                    videomaster_context->stream_handle,
-                    videomaster_context->channel_index,
-                    videomaster_context->video_buffer_packing,
-                    &videomaster_context->channel_type,
-                    &videomaster_context->audio_info,
-                    &videomaster_context->audio_sample_rate,
-                    &videomaster_context->audio_nb_channels,
-                    &videomaster_context->audio_sample_size,
-                    &videomaster_context->audio_codec) == 0)
-            {
-                if (videomaster_context->channel_type ==
-                    AV_VIDEOMASTER_CHANNEL_HDMI)
-                {
-                    if (videomaster_context->audio_sample_size != 0 &&
-                        videomaster_context->audio_nb_channels != 0)
-                    {
-                        videomaster_context->has_audio = true;
-                        av_log(
-                            videomaster_context->avctx, AV_LOG_TRACE,
-                            "Audio properties: %d channels @%dHz (%d bits)\n",
-                            videomaster_context->audio_nb_channels,
-                            videomaster_context->audio_sample_rate,
-                            videomaster_context->audio_sample_size);
-                    }
-                    else
-                    {
-                        av_log(videomaster_context->avctx, AV_LOG_WARNING,
-                               "Audio properties: No audio detected\n");
-                    }
-                }
-                else
-                {
-                    if (videomaster_context->audio_sample_size !=
-                            AV_VIDEOMASTER_SAMPLE_SIZE_UNKNOWN &&
-                        videomaster_context->audio_sample_rate !=
-                            AV_VIDEOMASTER_SAMPLE_RATE_UNKNOWN &&
-                        videomaster_context->audio_nb_channels != 0)
-                    {
-                        videomaster_context->has_audio = true;
-                        av_log(
-                            videomaster_context->avctx, AV_LOG_TRACE,
-                            "Audio properties: %d channels @%dHz (%d bits)\n",
-                            videomaster_context->audio_nb_channels,
-                            videomaster_context->audio_sample_rate,
-                            videomaster_context->audio_sample_size);
-                    }
-                    else
-                    {
-                        av_log(videomaster_context->avctx, AV_LOG_WARNING,
-                               "Audio properties: No audio detected\n");
-                    }
-                }
-            }
-            else
-            {
-                av_log(videomaster_context->avctx, AV_LOG_WARNING,
-                       "Failed to get audio properties\n");
-            }
-        }
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "Channel index is valid.\n");
     }
     else
     {
@@ -429,57 +282,232 @@ int check_channel_index(VideoMasterContext *videomaster_context)
                "Failed to get number of RX channels\n");
         return AVERROR(EIO);
     }
+    return 0;
+}
+
+static int check_channel_integrity(VideoMasterContext *videomaster_context)
+{
+    videomaster_context->has_video = false;
+    videomaster_context->has_audio = false;
+
+    if (!ff_videomaster_is_channel_locked(videomaster_context) &&
+        !videomaster_context->dual_stream)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "Channel %d is not locked\n",
+               videomaster_context->channel_index);
+        return 0;
+    }
+    else
+    {
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "Channel index is valid\n");
+        if (ff_videomaster_get_video_stream_properties(
+                videomaster_context->avctx, videomaster_context->board_handle,
+                videomaster_context->stream_handle,
+                videomaster_context->channel_index,
+                &videomaster_context->channel_type,
+                &videomaster_context->video_info,
+                &videomaster_context->video_width,
+                &videomaster_context->video_height,
+                &videomaster_context->video_frame_rate_num,
+                &videomaster_context->video_frame_rate_den,
+                &videomaster_context->video_interlaced,
+                videomaster_context->dual_stream) == 0)
+        {
+            videomaster_context->has_video = true;
+            float frame_rate =
+                (float)videomaster_context->video_frame_rate_num /
+                videomaster_context->video_frame_rate_den;
+            if (videomaster_context->channel_type ==
+                AV_VIDEOMASTER_CHANNEL_HDMI)
+            {
+                av_log(videomaster_context->avctx, AV_LOG_TRACE,
+                       "Stream properties: %dx%d@%.3f %s %s\n",
+                       videomaster_context->video_width,
+                       videomaster_context->video_height, frame_rate,
+                       VHD_DV_CS_ToPrettyString(
+                           videomaster_context->video_info.hdmi.color_space),
+                       VHD_DV_SAMPLING_ToPrettyString(
+                           videomaster_context->video_info.hdmi
+                               .cable_bit_sampling));
+                av_log(videomaster_context->avctx, AV_LOG_TRACE,
+                       "Pixel clock: %d\n",
+                       videomaster_context->video_info.hdmi.pixel_clock);
+                av_log(videomaster_context->avctx, AV_LOG_TRACE,
+                       "Interlaced: %s\n",
+                       videomaster_context->video_interlaced ? "true"
+                                                             : "false");
+                av_log(videomaster_context->avctx, AV_LOG_TRACE,
+                       "Color space: %s\n",
+                       VHD_DV_CS_ToPrettyString(
+                           videomaster_context->video_info.hdmi.color_space));
+                av_log(videomaster_context->avctx, AV_LOG_TRACE,
+                       "Cable bit sampling: %s\n",
+                       VHD_DV_SAMPLING_ToPrettyString(
+                           videomaster_context->video_info.hdmi
+                               .cable_bit_sampling));
+                av_log(videomaster_context->avctx, AV_LOG_TRACE,
+                       "Selected Buffer Packing: %s\n",
+                       VHD_BUFFERPACKING_ToPrettyString(
+                           videomaster_context->video_buffer_packing));
+            }
+            else
+            {
+                av_log(videomaster_context->avctx, AV_LOG_TRACE,
+                       "Stream properties: %dx%d@%.3f %s %s\n",
+                       videomaster_context->video_width,
+                       videomaster_context->video_height, frame_rate,
+                       VHD_VIDEOSTANDARD_ToPrettyString(
+                           videomaster_context->video_info.sdi.video_standard),
+                       VHD_CLOCKDIVISOR_ToPrettyString(
+                           videomaster_context->video_info.sdi.clock_divisor));
+                av_log(videomaster_context->avctx, AV_LOG_TRACE,
+                       "Interface: %s\n",
+                       VHD_INTERFACE_ToPrettyString(
+                           videomaster_context->video_info.sdi.interface));
+                av_log(videomaster_context->avctx, AV_LOG_TRACE,
+                       "Genlock offset: %d\n",
+                       videomaster_context->video_info.sdi.genlock_offset);
+            }
+
+            if (ff_videomaster_open_stream_handle(videomaster_context) == 0)
+            {
+                av_log(videomaster_context->avctx, AV_LOG_TRACE,
+                       "Stream handle opened successfully\n");
+            }
+            else
+            {
+                av_log(videomaster_context->avctx, AV_LOG_ERROR,
+                       "Failed to open stream handle.\n");
+                return AVERROR(EIO);
+            }
+        }
+        else
+        {
+            av_log(videomaster_context->avctx, AV_LOG_ERROR,
+                   "Failed to get stream properties\n");
+            return AVERROR(EIO);
+        }
+
+        if (ff_videomaster_get_audio_stream_properties(
+                videomaster_context->avctx, videomaster_context->board_handle,
+                videomaster_context->stream_handle,
+                videomaster_context->channel_index,
+                videomaster_context->video_buffer_packing,
+                &videomaster_context->channel_type,
+                &videomaster_context->audio_info,
+                &videomaster_context->audio_sample_rate,
+                &videomaster_context->audio_nb_channels,
+                &videomaster_context->audio_sample_size,
+                &videomaster_context->audio_codec) == 0)
+        {
+            if (videomaster_context->channel_type ==
+                AV_VIDEOMASTER_CHANNEL_HDMI)
+            {
+                if (videomaster_context->audio_sample_size != 0 &&
+                    videomaster_context->audio_nb_channels != 0)
+                {
+                    videomaster_context->has_audio = true;
+                    av_log(videomaster_context->avctx, AV_LOG_TRACE,
+                           "Audio properties: %d channels @%dHz (%d bits)\n",
+                           videomaster_context->audio_nb_channels,
+                           videomaster_context->audio_sample_rate,
+                           videomaster_context->audio_sample_size);
+                }
+                else
+                {
+                    av_log(videomaster_context->avctx, AV_LOG_WARNING,
+                           "Audio properties: No audio detected\n");
+                }
+            }
+            else
+            {
+                if (videomaster_context->audio_sample_size !=
+                        AV_VIDEOMASTER_SAMPLE_SIZE_UNKNOWN &&
+                    videomaster_context->audio_sample_rate !=
+                        AV_VIDEOMASTER_SAMPLE_RATE_UNKNOWN &&
+                    videomaster_context->audio_nb_channels != 0)
+                {
+                    videomaster_context->has_audio = true;
+                    av_log(videomaster_context->avctx, AV_LOG_TRACE,
+                           "Audio properties: %d channels @%dHz (%d bits)\n",
+                           videomaster_context->audio_nb_channels,
+                           videomaster_context->audio_sample_rate,
+                           videomaster_context->audio_sample_size);
+                }
+                else
+                {
+                    av_log(videomaster_context->avctx, AV_LOG_WARNING,
+                           "Audio properties: No audio detected\n");
+                }
+            }
+        }
+        else
+        {
+            av_log(videomaster_context->avctx, AV_LOG_WARNING,
+                   "Failed to get audio properties\n");
+        }
+    }
 
     return 0;
 }
 
-int check_header_arguments(VideoMasterContext *videomaster_context)
+static int check_header_arguments(VideoMasterContext *videomaster_context)
 {
-    if (check_board_index(videomaster_context) != 0)
+    int status = 0;
+    if ((status = check_board_index(videomaster_context)) != 0)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
                "Failed to check board index integrity\n");
-        return AVERROR(EIO);
+        return status;
     }
 
-    if (check_audio_properties(videomaster_context) != 0)
+    if ((status = check_audio_properties(videomaster_context)) != 0)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
                "Failed to check audio properties integrity\n");
         ff_videomaster_close_board_handle(videomaster_context);
-        return AVERROR(EIO);
+        return status;
     }
 
-    if (check_dual_stream(videomaster_context) != 0)
-    {
-        av_log(videomaster_context->avctx, AV_LOG_ERROR,
-               "Failed to check dual-stream integrity\n");
-        ff_videomaster_close_stream_handle(videomaster_context);
-        ff_videomaster_close_board_handle(videomaster_context);
-        return AVERROR(EIO);
-    }
-
-    if (check_channel_index(videomaster_context) != 0)
+    if ((status = check_channel_index(videomaster_context)) != 0)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
                "Failed to check channel index integrity\n");
         ff_videomaster_close_board_handle(videomaster_context);
-        return AVERROR(EIO);
+        return status;
     }
 
-    if (check_timestamp_source(videomaster_context) != 0)
+    if ((status = check_dual_stream(videomaster_context)) != 0)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Failed to check dual-stream integrity\n");
+        ff_videomaster_close_board_handle(videomaster_context);
+        return status;
+    }
+
+    if ((status = check_channel_integrity(videomaster_context)) != 0)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Failed to check channel index integrity\n");
+        ff_videomaster_close_board_handle(videomaster_context);
+        return status;
+    }
+
+    if ((status = check_timestamp_source(videomaster_context)) != 0)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
                "Failed to check timestamp source integrity\n");
         ff_videomaster_close_stream_handle(videomaster_context);
         ff_videomaster_close_board_handle(videomaster_context);
-        return AVERROR(EIO);
+        return status;
     }
 
     return 0;
 }
 
-int check_timestamp_source(VideoMasterContext *videomaster_context)
+static int check_timestamp_source(VideoMasterContext *videomaster_context)
 {
     VHD_TIMECODE  time_code;
     BOOL32        ltc_source_is_locked;
@@ -601,8 +629,8 @@ int check_timestamp_source(VideoMasterContext *videomaster_context)
     return 0;
 }
 
-int handle_stream_error(VideoMasterContext *ctx, const char *message,
-                        int error_code)
+static int handle_stream_error(VideoMasterContext *ctx, const char *message,
+                               int error_code)
 {
     av_log(ctx->avctx, AV_LOG_ERROR, "%s\n", message);
     ff_videomaster_close_stream_handle(ctx);
@@ -610,7 +638,7 @@ int handle_stream_error(VideoMasterContext *ctx, const char *message,
     return error_code;
 }
 
-int parse_command_line_arguments(AVFormatContext *avctx)
+static int parse_command_line_arguments(AVFormatContext *avctx)
 {
     struct VideoMasterData    *videomaster_data = NULL;
     struct VideoMasterContext *videomaster_context = NULL;
@@ -718,7 +746,7 @@ int parse_command_line_arguments(AVFormatContext *avctx)
     return 0;
 }
 
-int setup_audio_stream(VideoMasterContext *videomaster_context)
+static int setup_audio_stream(VideoMasterContext *videomaster_context)
 {
     if (videomaster_context->has_audio)
     {
@@ -743,7 +771,7 @@ int setup_audio_stream(VideoMasterContext *videomaster_context)
     return 0;
 }
 
-int setup_streams(VideoMasterContext *videomaster_context)
+static int setup_streams(VideoMasterContext *videomaster_context)
 {
     int error_code = setup_video_stream(videomaster_context);
     if (error_code != 0)
@@ -757,7 +785,7 @@ int setup_streams(VideoMasterContext *videomaster_context)
     return 0;
 }
 
-int setup_video_stream(VideoMasterContext *videomaster_context)
+static int setup_video_stream(VideoMasterContext *videomaster_context)
 {
     if (videomaster_context->has_video)
     {
