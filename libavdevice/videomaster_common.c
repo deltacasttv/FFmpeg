@@ -2278,12 +2278,22 @@ int ff_videomaster_get_video_stream_properties(
             return AVERROR(EINVAL);
         }
 
-        handle_vhd_status(
+        av_status = handle_vhd_status(
             avctx,
             VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL, channel_index,
                                    VHD_SDI_CP_VIDEO_STANDARD,
                                    (uint32_t *)&video_info->sdi.video_standard),
             "", "Failed to get SDI video standard from channel properties");
+
+        if (av_status != 0)
+        {
+            av_log(
+                avctx, AV_LOG_ERROR,
+                "Failed to get SDI video standard from channel properties for "
+                "SDI channel %u\n",
+                channel_index);
+            return av_status;
+        }
 
         if (video_info->sdi.video_standard == NB_VHD_VIDEOSTANDARDS)
         {

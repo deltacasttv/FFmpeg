@@ -190,7 +190,7 @@ static int check_audio_properties(VideoMasterContext *videomaster_context)
         {
             av_log(videomaster_context->avctx, AV_LOG_WARNING,
                    "Invalid audio properties: "
-                   "audio_nb_channels=%d, audio_sample_rate=%s, "
+                   "audio_nb_channels=%u, audio_sample_rate=%s, "
                    "audio_sample_size=%s. Audio will be ignored if audio "
                    "stream is present.\n",
                    videomaster_context->audio_nb_channels,
@@ -217,7 +217,7 @@ static int check_board_index(VideoMasterContext *videomaster_context)
         videomaster_context->number_of_boards)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
-               "Invalid board index: %d\n", videomaster_context->board_index);
+               "Invalid board index: %u\n", videomaster_context->board_index);
         return AVERROR(EINVAL);
     }
 
@@ -268,7 +268,7 @@ static int check_channel_index(VideoMasterContext *videomaster_context)
             videomaster_context->nb_rx_channels)
         {
             av_log(videomaster_context->avctx, AV_LOG_ERROR,
-                   "Invalid channel index: %d\n",
+                   "Invalid channel index: %u\n",
                    videomaster_context->channel_index);
             return AVERROR(EINVAL);
         }
@@ -294,7 +294,7 @@ static int check_channel_integrity(VideoMasterContext *videomaster_context)
         !videomaster_context->dual_stream)
     {
         av_log(videomaster_context->avctx, AV_LOG_TRACE,
-               "Channel %d is not locked\n",
+               "Channel %u is not locked\n",
                videomaster_context->channel_index);
         return 0;
     }
@@ -323,7 +323,7 @@ static int check_channel_integrity(VideoMasterContext *videomaster_context)
                 AV_VIDEOMASTER_CHANNEL_HDMI)
             {
                 av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                       "Stream properties: %dx%d@%.3f %s %s\n",
+                       "Stream properties: %ux%u@%.3f %s %s\n",
                        videomaster_context->video_width,
                        videomaster_context->video_height, frame_rate,
                        VHD_DV_CS_ToPrettyString(
@@ -332,7 +332,7 @@ static int check_channel_integrity(VideoMasterContext *videomaster_context)
                            videomaster_context->video_info.hdmi
                                .cable_bit_sampling));
                 av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                       "Pixel clock: %d\n",
+                       "Pixel clock: %u\n",
                        videomaster_context->video_info.hdmi.pixel_clock);
                 av_log(videomaster_context->avctx, AV_LOG_TRACE,
                        "Interlaced: %s\n",
@@ -355,7 +355,7 @@ static int check_channel_integrity(VideoMasterContext *videomaster_context)
             else
             {
                 av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                       "Stream properties: %dx%d@%.3f %s %s\n",
+                       "Stream properties: %ux%u@%.3f %s %s\n",
                        videomaster_context->video_width,
                        videomaster_context->video_height, frame_rate,
                        VHD_VIDEOSTANDARD_ToPrettyString(
@@ -407,7 +407,7 @@ static int check_channel_integrity(VideoMasterContext *videomaster_context)
                 {
                     videomaster_context->has_audio = true;
                     av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                           "Audio properties: %d channels @%dHz (%d bits)\n",
+                           "Audio properties: %u channels @%uHz (%u bits)\n",
                            videomaster_context->audio_nb_channels,
                            videomaster_context->audio_sample_rate,
                            videomaster_context->audio_sample_size);
@@ -428,7 +428,7 @@ static int check_channel_integrity(VideoMasterContext *videomaster_context)
                 {
                     videomaster_context->has_audio = true;
                     av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                           "Audio properties: %d channels @%dHz (%d bits)\n",
+                           "Audio properties: %u channels @%uHz (%u bits)\n",
                            videomaster_context->audio_nb_channels,
                            videomaster_context->audio_sample_rate,
                            videomaster_context->audio_sample_size);
@@ -471,7 +471,7 @@ static int check_header_arguments(VideoMasterContext *videomaster_context)
     if ((status = check_channel_index(videomaster_context)) != 0)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
-               "Failed to check channel index integrity\n");
+               "Failed to check channel integrity\n");
         ff_videomaster_close_board_handle(videomaster_context);
         return status;
     }
@@ -683,7 +683,7 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
                    "\"%s\" is selected. Parse string to get board and channel "
                    "index.\n",
                    avctx->url);
-            if (sscanf(avctx->url, "stream %d on board %d",
+            if (sscanf(avctx->url, "stream %u on board %u",
                        &videomaster_context->channel_index,
                        &videomaster_context->board_index) != 2)
             {
@@ -732,7 +732,7 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
     }
 
     av_log(avctx, AV_LOG_INFO,
-           "Board index: %d, Stream index: %d, Timestamp source: %s, Selected "
+           "Board index: %u, Stream index: %u, Timestamp source: %s, Selected "
            "buffer packing: %s\n",
            videomaster_context->board_index, videomaster_context->channel_index,
            ff_videomaster_timestamp_type_to_string(
