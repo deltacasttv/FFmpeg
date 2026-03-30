@@ -312,15 +312,15 @@ typedef struct VideoMasterData
     void *context;  /// DELTACAST board context
 
     /* Command Options */
-    int64_t board_index;       ///< index of the board to use
-    int64_t channel_index;     ///< index of the stream to use
-    int64_t timestamp_source;  ///< source of the timestamp
-    int64_t nb_channels;       ///< number of channels to use
-    int64_t sample_rate;       ///< sample rate of the audio stream
-    int64_t sample_size;       ///< bits per sample in the audio stream
-    int64_t buffer_packing;    ///< buffer packing format
-    int64_t dual_stream;  ///< 0/1 if the stream must be configured with 3G-B-DS
-                          ///< interface
+    int board_index;       ///< index of the board to use
+    int channel_index;     ///< index of the stream to use
+    int timestamp_source;  ///< source of the timestamp
+    int nb_channels;       ///< number of channels to use
+    int sample_rate;       ///< sample rate of the audio stream
+    int sample_size;       ///< bits per sample in the audio stream
+    int buffer_packing;    ///< buffer packing format
+    int dual_stream;  ///< 0/1 if the stream must be configured with 3G-B-DS
+                      ///< interface
 } VideoMasterData;
 
 /**

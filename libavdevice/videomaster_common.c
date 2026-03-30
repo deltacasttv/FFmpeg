@@ -2615,7 +2615,7 @@ int ff_videomaster_get_video_stream_properties(
 bool ff_videomaster_is_3g_b_ds_interface_supported(
     VideoMasterContext *videomaster_context)
 {
-    bool interface_supported = false;
+    BOOL32 interface_supported = false;
     if (videomaster_context->board_handle)
     {
         enum AVVideoMasterChannelType channel_type =
@@ -2638,7 +2638,7 @@ bool ff_videomaster_is_3g_b_ds_interface_supported(
             VHD_GetBoardCapSDIInterface(videomaster_context->board_handle,
                                         stream_type,
                                         VHD_INTERFACE_3G_B_DS_425_1,
-                                        (BOOL32 *)&interface_supported);
+                                        &interface_supported);
         else
         {
             av_log(videomaster_context->avctx, AV_LOG_DEBUG,
@@ -2650,7 +2650,7 @@ bool ff_videomaster_is_3g_b_ds_interface_supported(
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
                "Board handle is missing\n");
     }
-    return interface_supported;
+    return !!interface_supported;
 }
 
 bool ff_videomaster_is_channel_locked(VideoMasterContext *videomaster_context)
@@ -2675,31 +2675,30 @@ bool ff_videomaster_is_channel_locked(VideoMasterContext *videomaster_context)
 bool ff_videomaster_is_hardware_timestamp_supported(
     VideoMasterContext *videomaster_context)
 {
-    bool hardware_timestamp_supported = false;
+    ULONG hardware_timestamp_supported = 0;
     if (videomaster_context->board_handle)
         VHD_GetBoardCapability(videomaster_context->board_handle,
                                VHD_CORE_BOARD_CAP_TIMESTAMP,
-                               (ULONG *)&hardware_timestamp_supported);
+                               &hardware_timestamp_supported);
     else
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
                "Board handle is missing\n");
     }
-    return hardware_timestamp_supported;
+    return !!hardware_timestamp_supported;
 }
 
 bool ff_videomaster_is_ltc_companion_card_present(
     VideoMasterContext *videomaster_context)
 {
-    bool ltc_companion_card_feature_supported = false;
-    bool ltc_companion_card_present = false;
+    BOOL32 ltc_companion_card_present = false;
     if (videomaster_context->board_handle)
     {
         if (ff_videomaster_is_ltc_companion_card_supported(videomaster_context))
         {
             VHD_DetectCompanionCard(videomaster_context->board_handle,
                                     VHD_LTC_COMPANION_CARD,
-                                    (BOOL32 *)&ltc_companion_card_present);
+                                    &ltc_companion_card_present);
         }
     }
     else
@@ -2708,40 +2707,40 @@ bool ff_videomaster_is_ltc_companion_card_present(
                "Board handle is missing\n");
     }
 
-    return ltc_companion_card_present;
+    return !!ltc_companion_card_present;
 }
 
 bool ff_videomaster_is_ltc_companion_card_supported(
     VideoMasterContext *videomaster_context)
 {
-    bool ltc_companion_card_feature_supported = false;
+    ULONG ltc_companion_card_feature_supported = 0;
     if (videomaster_context->board_handle)
         VHD_GetBoardCapability(videomaster_context->board_handle,
                                VHD_CORE_BOARD_CAP_LTC_COMPANION_CARD,
-                               (ULONG *)&ltc_companion_card_feature_supported);
+                               &ltc_companion_card_feature_supported);
     else
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
                "Board handle is missing\n");
     }
-    return ltc_companion_card_feature_supported;
+    return !!ltc_companion_card_feature_supported;
 }
 
 bool ff_videomaster_is_ltc_on_board_timestamp_supported(
     VideoMasterContext *videomaster_context)
 {
-    bool ltc_on_board_timestamp_supported = false;
+    ULONG ltc_on_board_timestamp_supported = 0;
     if (videomaster_context->board_handle)
         VHD_GetBoardCapability(videomaster_context->board_handle,
                                VHD_CORE_BOARD_CAP_LTC_ONBOARD,
-                               (ULONG *)&ltc_on_board_timestamp_supported);
+                               &ltc_on_board_timestamp_supported);
     else
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
                "Board handle is missing\n");
     }
 
-    return ltc_on_board_timestamp_supported;
+    return !!ltc_on_board_timestamp_supported;
 }
 
 int ff_videomaster_open_board_handle(VideoMasterContext *videomaster_context)
