@@ -234,7 +234,7 @@ typedef struct VideoMasterContext
         channel_type;  ///< type of the channel (HDMI or SDI)
     enum AVVideoMasterTimeStampType
          timestamp_source;  ///< source of the timestamp
-    bool dual_stream;  ///< true if the stream must be configured with 3GB-DS
+    bool dual_stream;  ///< true if the stream must be configured with 3G-B-DS
                        ///< interface
 
     uint32_t api_version;       ///< API version
@@ -319,7 +319,7 @@ typedef struct VideoMasterData
     int64_t sample_rate;       ///< sample rate of the audio stream
     int64_t sample_size;       ///< bits per sample in the audio stream
     int64_t buffer_packing;    ///< buffer packing format
-    int64_t dual_stream;  ///< 0/1 if the stream must be configured with 3GB-DS
+    int64_t dual_stream;  ///< 0/1 if the stream must be configured with 3G-B-DS
                           ///< interface
 } VideoMasterData;
 
@@ -549,8 +549,8 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
  * @param frame_rate_den Pointer to store the denominator of the frame rate of
  * the video stream.
  * @param interlaced Pointer to store whether the video stream is interlaced.
- * @param dual_stream Indicates whether the stream must be configured with 3G B
- * DS interface instead of using auto-detection.
+ * @param dual_stream Indicates whether the stream must be configured with
+ * 3G-B-DS interface instead of using auto-detection.
  *
  * @return 0 on success, or a negative AVERROR code on failure.
  */
@@ -562,10 +562,10 @@ int ff_videomaster_get_video_stream_properties(
     bool dual_stream);
 
 /**
- * @brief Checks if 3G-B DS interface is supported on the VideoMaster device.
+ * @brief Checks if 3G-B-DS interface is supported on the VideoMaster device.
  *
  * @param videomaster_context The VideoMaster context to use.
- * @return true if 3G-B DS interface is supported, false otherwise.
+ * @return true if 3G-B-DS interface is supported, false otherwise.
  */
 bool ff_videomaster_is_3g_b_ds_interface_supported(
     VideoMasterContext *videomaster_context);

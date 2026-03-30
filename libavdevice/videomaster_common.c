@@ -2149,6 +2149,8 @@ int ff_videomaster_get_video_stream_properties(
     uint32_t total_height = 0;
     HANDLE   local_stream_handle = stream_handle;
     int      av_status = 0;
+
+    BOOL32 interlaced_tmp = 0;
     *channel_type = ff_videomaster_get_channel_type_from_index(avctx,
                                                                board_handle,
                                                                channel_index);
@@ -2215,7 +2217,7 @@ int ff_videomaster_get_video_stream_properties(
                  avctx,
                  VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL,
                                         channel_index, VHD_DV_CP_INTERLACED,
-                                        (uint32_t *)interlaced),
+                                        (uint32_t *)&interlaced_tmp),
                  "", "")) != 0)
         {
             av_log(
@@ -2225,6 +2227,8 @@ int ff_videomaster_get_video_stream_properties(
                 channel_index);
             return av_status;
         }
+        *interlaced = !!interlaced_tmp;
+
         if ((av_status = handle_vhd_status(
                  avctx,
                  VHD_GetChannelProperty(
@@ -2360,7 +2364,7 @@ int ff_videomaster_get_video_stream_properties(
             return AVERROR(EINVAL);
         }
 
-        // Ignore return value because, dependending on the interface, some
+        // Ignore return value because, depending on the interface, some
         // error could be returned but the video standard could still be
         // retrieved from the stream properties (for dual stream mode)
         handle_vhd_status(
@@ -2435,14 +2439,14 @@ int ff_videomaster_get_video_stream_properties(
                 }
             }
 
-            if ((handle_vhd_status(
-                    avctx,
-                    VHD_GetStreamProperty(
-                        local_stream_handle, VHD_SDI_SP_VIDEO_STANDARD,
-                        (uint32_t *)&video_info->sdi.video_standard),
-                    "",
-                    "Failed to get SDI video standard from stream "
-                    "properties")) != 0)
+            if ((av_status = handle_vhd_status(
+                     avctx,
+                     VHD_GetStreamProperty(
+                         local_stream_handle, VHD_SDI_SP_VIDEO_STANDARD,
+                         (uint32_t *)&video_info->sdi.video_standard),
+                     "",
+                     "Failed to get SDI video standard from stream "
+                     "properties")) != 0)
             {
                 av_log(avctx, AV_LOG_ERROR,
                        "Failed to get SDI video standard from stream "
@@ -2466,12 +2470,12 @@ int ff_videomaster_get_video_stream_properties(
                 return AVERROR(EIO);
             }
 
-            if ((handle_vhd_status(
-                    avctx,
-                    VHD_GetBoardProperty(
-                        board_handle, board_property_clock_divisor,
-                        (uint32_t *)&video_info->sdi.clock_divisor),
-                    "", "")) != 0)
+            if ((av_status = handle_vhd_status(
+                     avctx,
+                     VHD_GetBoardProperty(
+                         board_handle, board_property_clock_divisor,
+                         (uint32_t *)&video_info->sdi.clock_divisor),
+                     "", "")) != 0)
             {
                 av_log(
                     avctx, AV_LOG_ERROR,
@@ -2560,11 +2564,12 @@ int ff_videomaster_get_video_stream_properties(
                 return av_status;
             }
         }
+
         if ((av_status = handle_vhd_status(
                  avctx,
                  VHD_GetVideoCharacteristics(video_info->sdi.video_standard,
-                                             width, height,
-                                             (BOOL32 *)interlaced, &frame_rate),
+                                             width, height, &interlaced_tmp,
+                                             &frame_rate),
                  "", "")) != 0)
         {
             av_log(avctx, AV_LOG_ERROR,
@@ -2572,6 +2577,8 @@ int ff_videomaster_get_video_stream_properties(
                    channel_index);
             return av_status;
         }
+
+        *interlaced = !!interlaced_tmp;
 
         *frame_rate_num = frame_rate * 1000;
         switch (video_info->sdi.clock_divisor)

@@ -190,10 +190,10 @@ static int check_audio_properties(VideoMasterContext *videomaster_context)
         {
             av_log(videomaster_context->avctx, AV_LOG_WARNING,
                    "Invalid audio properties: "
-                   "audio_nb_channels=%u, audio_sample_rate=%s, "
+                   "audio_nb_channels=%d, audio_sample_rate=%s, "
                    "audio_sample_size=%s. Audio will be ignored if audio "
                    "stream is present.\n",
-                   videomaster_context->audio_nb_channels,
+                   (int)videomaster_context->audio_nb_channels,
                    ff_videomaster_sample_rate_to_string(
                        videomaster_context->audio_sample_rate),
                    ff_videomaster_sample_size_to_string(
