@@ -2425,6 +2425,7 @@ int ff_videomaster_get_video_stream_properties(
                            "Failed to set stream interface to 3G_B_DS_425_1 "
                            "for SDI channel %u\n",
                            channel_index);
+                    VHD_CloseStreamHandle(local_stream_handle);
                     return av_status;
                 }
 
@@ -2636,7 +2637,7 @@ bool ff_videomaster_is_3g_b_ds_interface_supported(
                                         (BOOL32 *)&interface_supported);
         else
         {
-            av_log(videomaster_context->avctx, AV_LOG_ERROR,
+            av_log(videomaster_context->avctx, AV_LOG_DEBUG,
                    "Channel type is not SDI\n");
         }
     }
