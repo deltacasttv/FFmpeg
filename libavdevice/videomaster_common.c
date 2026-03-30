@@ -528,7 +528,7 @@ static int add_device_info_into_list(VideoMasterContext *videomaster_context,
     const char   *device_description = NULL;
     AVDeviceInfo *new_device = NULL;
     snprintf(error_msg, sizeof(error_msg),
-             "Failed to get stream properties for channel %d on board %d",
+             "Failed to get stream properties for channel %u on board %u",
              videomaster_context->channel_index,
              videomaster_context->board_index);
 
@@ -548,8 +548,8 @@ static int add_device_info_into_list(VideoMasterContext *videomaster_context,
         "", error_msg);
 
     snprintf(error_msg, sizeof(error_msg),
-             "Failed to get audio stream properties for channel %d on board "
-             "%d",
+             "Failed to get audio stream properties for channel %u on board "
+             "%u",
              videomaster_context->channel_index,
              videomaster_context->board_index);
 
@@ -583,7 +583,7 @@ static int add_device_info_into_list(VideoMasterContext *videomaster_context,
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
                "Failed to allocate memory for device name or description for "
-               "channel %d on board %d\n",
+               "channel %u on board %u\n",
                videomaster_context->channel_index,
                videomaster_context->board_index);
         return AVERROR(ENOMEM);
@@ -595,8 +595,8 @@ static int add_device_info_into_list(VideoMasterContext *videomaster_context,
     if (!new_device)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
-               "Failed to create device info for channel %d on "
-               "board %d\n",
+               "Failed to create device info for channel %u on "
+               "board %u\n",
                videomaster_context->channel_index,
                videomaster_context->board_index);
         av_freep(&device_name);
@@ -605,7 +605,7 @@ static int add_device_info_into_list(VideoMasterContext *videomaster_context,
     }
 
     av_log(videomaster_context->avctx, AV_LOG_DEBUG,
-           "Device info created for channel %d on board %d : device_name = "
+           "Device info created for channel %u on board %u : device_name = "
            "%s, device_description = %s\n",
            videomaster_context->channel_index, videomaster_context->board_index,
            device_name, device_description);
@@ -623,7 +623,7 @@ static int add_device_info_into_list(VideoMasterContext *videomaster_context,
     }
 
     av_log(videomaster_context->avctx, AV_LOG_TRACE,
-           "Device info for channel %d on board %d added to list\n",
+           "Device info for channel %u on board %u added to list\n",
            videomaster_context->channel_index,
            videomaster_context->board_index);
 
@@ -726,7 +726,7 @@ static char *format_device_description(VideoMasterContext *videomaster_context,
     {
         snprintf(
             device_description, 256,
-            "HDMI video: %dx%d%s%.3f %s %s, audio: %d channels @%dHz (%d bits) "
+            "HDMI video: %ux%u%s%.3f %s %s, audio: %u channels @%uHz (%u bits) "
             "on "
             "board %s (SN: %s)",
             videomaster_context->video_width, videomaster_context->video_height,
@@ -745,7 +745,7 @@ static char *format_device_description(VideoMasterContext *videomaster_context,
             videomaster_context->video_info.sdi.interface);
 
         snprintf(device_description, 256,
-                 "SDI video: %dx%d%s%.3f (interface: %s) on board %s (SN: %s)",
+                 "SDI video: %ux%u%s%.3f (interface: %s) on board %s (SN: %s)",
                  videomaster_context->video_width,
                  videomaster_context->video_height,
                  videomaster_context->video_interlaced ? "i" : "p",
@@ -768,7 +768,7 @@ static char *format_device_name(VideoMasterContext *videomaster_context,
                "Failed to allocate memory for device name\n");
         return NULL;
     }
-    snprintf(device_name, 256, "stream %d on board %d",
+    snprintf(device_name, 256, "stream %u on board %u",
              videomaster_context->channel_index,
              videomaster_context->board_index);
     return device_name;
@@ -1053,7 +1053,7 @@ get_channel_mask_from_nb_channels(VideoMasterContext *videomaster_context)
         return 0b11111111;
     default:
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
-               "Unsupported number of channels: %d\n",
+               "Unsupported number of channels: %u\n",
                videomaster_context->audio_nb_channels);
         return AVERROR(EINVAL);
     }
@@ -1209,7 +1209,7 @@ static int get_rx_sdi_board_property_clock_divisor_from_index(uint32_t index)
         return VHD_SDI_BP_RX11_CLOCK_DIV;
     default:
         av_log(NULL, AV_LOG_ERROR,
-               "Unsupported channel index for SDI clock divisor: %d\n", index);
+               "Unsupported channel index for SDI clock divisor: %u\n", index);
         return -1;
     }
 }
@@ -1716,7 +1716,7 @@ static int release_audio_info(VideoMasterContext *videomaster_context,
                 if (audio_channel->pData)
                 {
                     av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                           "Freeing audio data buffer of size %d\n",
+                           "Freeing audio data buffer of size %u\n",
                            audio_channel->DataSize);
                     av_freep(&audio_channel->pData);
                     audio_channel->pData = NULL;
@@ -1801,8 +1801,8 @@ int ff_videomaster_create_devices_infos_from_board_index(
         if (ff_videomaster_is_channel_locked(videomaster_context))
         {
             av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                   "Channel %d is locked on "
-                   "board %d -> create "
+                   "Channel %u is locked on "
+                   "board %u -> create "
                    "device info\n",
                    channel_index, board_index);
 
@@ -1814,8 +1814,8 @@ int ff_videomaster_create_devices_infos_from_board_index(
         }
         else
             av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                   "Channel %d is unlocked "
-                   "on board %d\n",
+                   "Channel %u is unlocked "
+                   "on board %u\n",
                    channel_index, board_index);
     }
     ff_videomaster_close_board_handle(videomaster_context);
@@ -1880,10 +1880,10 @@ int ff_videomaster_get_api_info(VideoMasterContext *videomaster_context)
             "Failed to retrieve API "
             "version") == 0)
     {
-        av_log(videomaster_context->avctx, AV_LOG_INFO, "API Version: %d\n",
+        av_log(videomaster_context->avctx, AV_LOG_INFO, "API Version: %u\n",
                videomaster_context->api_version);
         av_log(videomaster_context->avctx, AV_LOG_INFO,
-               "Number of Boards: %d\n", videomaster_context->number_of_boards);
+               "Number of Boards: %u\n", videomaster_context->number_of_boards);
 
         av_error = 0;
     }
@@ -2214,7 +2214,7 @@ int ff_videomaster_get_video_stream_properties(
         if (av_status != 0)
         {
             av_log(avctx, AV_LOG_ERROR,
-                   "Failed to open stream handle for HDMI channel %d\n",
+                   "Failed to open stream handle for HDMI channel u\n",
                    channel_index);
             return av_status;
         }
@@ -2265,7 +2265,7 @@ int ff_videomaster_get_video_stream_properties(
         if (board_property_clock_divisor == -1)
         {
             av_log(avctx, AV_LOG_ERROR,
-                   "Unsupported channel index %d for SDI "
+                   "Unsupported channel index %u for SDI "
                    "clock divisor board property\n",
                    channel_index);
             return AVERROR(EINVAL);
@@ -2274,7 +2274,7 @@ int ff_videomaster_get_video_stream_properties(
         if (stream_type == NB_VHD_STREAMTYPES)
         {
             av_log(avctx, AV_LOG_ERROR,
-                   "Unsupported channel index %d for SDI "
+                   "Unsupported channel index %u for SDI "
                    "stream type\n",
                    channel_index);
             return AVERROR(EINVAL);
@@ -2315,6 +2315,15 @@ int ff_videomaster_get_video_stream_properties(
                     "Failed to open stream "
                     "handle");
 
+                if (av_status != 0)
+                {
+                    av_log(avctx, AV_LOG_ERROR,
+                           "Failed to open stream handle for SDI channel %u in "
+                           "dual stream mode to get video properties\n",
+                           channel_index);
+                    return av_status;
+                }
+
                 handle_vhd_status(avctx,
                                   VHD_SetStreamProperty(
                                       local_stream_handle, VHD_SDI_SP_INTERFACE,
@@ -2323,15 +2332,6 @@ int ff_videomaster_get_video_stream_properties(
                                   "Failed to set VHD_INTERFACE_3G_B_DS_425_1 "
                                   "interface on stream handle");
 
-                if (av_status != 0)
-                {
-                    av_log(avctx, AV_LOG_ERROR,
-                           "Failed to open stream handle for SDI channel %d in "
-                           "dual stream mode to get video properties\n",
-                           channel_index);
-                    return av_status;
-                }
-
                 av_status = handle_vhd_status(
                     avctx, VHD_StartStream(local_stream_handle), "",
                     "Failed to start stream to detect video properties");
@@ -2339,7 +2339,7 @@ int ff_videomaster_get_video_stream_properties(
                 if (av_status != 0)
                 {
                     av_log(avctx, AV_LOG_ERROR,
-                           "Failed to start stream for SDI channel %d in dual "
+                           "Failed to start stream for SDI channel %u in dual "
                            "stream mode to get video properties\n",
                            channel_index);
                     VHD_CloseStreamHandle(local_stream_handle);
@@ -2374,7 +2374,7 @@ int ff_videomaster_get_video_stream_properties(
             {
                 av_log(avctx, AV_LOG_ERROR,
                        "Unsupported clock divisor retrieved from board "
-                       "properties for SDI channel %d\n",
+                       "properties for SDI channel %u\n",
                        channel_index);
                 VHD_StopStream(local_stream_handle);
                 if (stream_handle == NULL)
@@ -2427,7 +2427,7 @@ int ff_videomaster_get_video_stream_properties(
         default:
             av_log(avctx, AV_LOG_ERROR,
                    "Unsupported clock "
-                   "divisor: %d\n",
+                   "divisor: %u\n",
                    video_info->sdi.clock_divisor);
             return AVERROR(EIO);
         }
@@ -2453,7 +2453,7 @@ bool ff_videomaster_is_3g_b_ds_interface_supported(
     if (stream_type == NB_VHD_STREAMTYPES)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
-               "Unsupported channel index %d for SDI "
+               "Unsupported channel index %u for SDI "
                "stream type\n",
                videomaster_context->channel_index);
         return false;
@@ -2599,7 +2599,7 @@ int ff_videomaster_release_data(VideoMasterContext *videomaster_context)
     {
         av_log(videomaster_context->avctx, AV_LOG_TRACE,
                "Freeing audio buffer of size "
-               "%d\n",
+               "%u\n",
                videomaster_context->audio_buffer_size);
         av_freep(&videomaster_context->audio_buffer);
         videomaster_context->audio_buffer = NULL;
