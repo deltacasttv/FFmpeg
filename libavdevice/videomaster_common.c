@@ -2411,36 +2411,38 @@ int ff_videomaster_get_video_stream_properties(
                            channel_index);
                     return av_status;
                 }
+            }
 
-                if ((av_status = handle_vhd_status(
-                         avctx,
-                         VHD_SetStreamProperty(local_stream_handle,
-                                               VHD_SDI_SP_INTERFACE,
-                                               video_info->sdi.interface),
-                         "",
-                         "Failed to set VHD_INTERFACE_3G_B_DS_425_1 "
-                         "interface on stream handle")) != 0)
-                {
-                    av_log(avctx, AV_LOG_ERROR,
-                           "Failed to set stream interface to 3G_B_DS_425_1 "
-                           "for SDI channel %u\n",
-                           channel_index);
+            if ((av_status = handle_vhd_status(
+                     avctx,
+                     VHD_SetStreamProperty(local_stream_handle,
+                                           VHD_SDI_SP_INTERFACE,
+                                           video_info->sdi.interface),
+                     "",
+                     "Failed to set VHD_INTERFACE_3G_B_DS_425_1 "
+                     "interface on stream handle")) != 0)
+            {
+                av_log(avctx, AV_LOG_ERROR,
+                       "Failed to set stream interface to 3G_B_DS_425_1 "
+                       "for SDI channel %u\n",
+                       channel_index);
+                if (stream_handle == NULL)
                     VHD_CloseStreamHandle(local_stream_handle);
-                    return av_status;
-                }
+                return av_status;
+            }
 
-                if ((av_status = handle_vhd_status(
-                         avctx, VHD_StartStream(local_stream_handle), "",
-                         "Failed to start stream to detect video "
-                         "properties")) != 0)
-                {
-                    av_log(avctx, AV_LOG_ERROR,
-                           "Failed to start stream for SDI channel %u in dual "
-                           "stream mode to get video properties\n",
-                           channel_index);
+            if ((av_status = handle_vhd_status(
+                     avctx, VHD_StartStream(local_stream_handle), "",
+                     "Failed to start stream to detect video "
+                     "properties")) != 0)
+            {
+                av_log(avctx, AV_LOG_ERROR,
+                       "Failed to start stream for SDI channel %u in dual "
+                       "stream mode to get video properties\n",
+                       channel_index);
+                if (stream_handle == NULL)
                     VHD_CloseStreamHandle(local_stream_handle);
-                    return av_status;
-                }
+                return av_status;
             }
 
             if ((av_status = handle_vhd_status(
