@@ -2369,6 +2369,7 @@ int ff_videomaster_get_video_stream_properties(
         // Ignore return value because, depending on the interface, some
         // error could be returned but the video standard could still be
         // retrieved from the stream properties (for dual stream mode)
+        video_info->sdi.video_standard = NB_VHD_VIDEOSTANDARDS;
         handle_vhd_status(
             avctx,
             VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL, channel_index,
