@@ -337,11 +337,11 @@ static VHD_CORE_BOARDPROPERTY get_passive_loopback_property(int channel_index);
  * @brief Get the RX SDI clock divisor board property from the given index
  *
  * @param index Index of the RX SDI channel
- * @return uint32_t The RX SDI clock divisor board property
+ * @return int The RX SDI clock divisor board property. Returns -1 if the index
+ is invalid.
 
  */
-static uint32_t
-get_rx_sdi_board_property_clock_divisor_from_index(uint32_t index);
+static int get_rx_sdi_board_property_clock_divisor_from_index(uint32_t index);
 
 /**
  * @brief Get the rx stream type Videomaster enumeration from the  channel index
@@ -519,8 +519,8 @@ static int release_audio_info(VideoMasterContext *videomaster_context,
 
 /** static functions definitions **/
 static int add_device_info_into_list(VideoMasterContext *videomaster_context,
-                              char *board_name, char *serial_number,
-                              struct AVDeviceInfoList **device_list)
+                                     char *board_name, char *serial_number,
+                                     struct AVDeviceInfoList **device_list)
 {
     char          error_msg[128];
     int           av_error = 0;
@@ -631,8 +631,8 @@ static int add_device_info_into_list(VideoMasterContext *videomaster_context,
 }
 
 static AVDeviceInfo *create_device_info(VideoMasterContext *videomaster_context,
-                                 char *device_name, char *device_description,
-                                 bool is_video)
+                                        char               *device_name,
+                                        char *device_description, bool is_video)
 {
     AVDeviceInfo *device_info = av_mallocz(sizeof(AVDeviceInfo));
     if (!device_info)
@@ -708,8 +708,8 @@ static int disable_loopback_on_channel(VideoMasterContext *videomaster_context)
 }
 
 static char *format_device_description(VideoMasterContext *videomaster_context,
-                                const char         *board_name,
-                                const char         *serial_number)
+                                       const char         *board_name,
+                                       const char         *serial_number)
 {
     char  *device_description = av_mallocz(256);
     double frame_rate = 0.0;
@@ -758,7 +758,8 @@ static char *format_device_description(VideoMasterContext *videomaster_context,
 }
 
 static char *format_device_name(VideoMasterContext *videomaster_context,
-                         const char *board_name, const char *serial_number)
+                                const char         *board_name,
+                                const char         *serial_number)
 {
     char *device_name = av_mallocz(256);
     if (!device_name)
@@ -965,8 +966,9 @@ static int get_audio_stream_properties_from_audio_infoframe(
     return av_error;
 }
 
-static int get_board_name_and_serial_number(VideoMasterContext *videomaster_context,
-                                     char **board_name, char **serial_number)
+static int
+get_board_name_and_serial_number(VideoMasterContext *videomaster_context,
+                                 char **board_name, char **serial_number)
 {
     int av_error = 0;
 
@@ -987,7 +989,7 @@ static int get_board_name_and_serial_number(VideoMasterContext *videomaster_cont
 }
 
 static int get_board_name(VideoMasterContext *videomaster_context,
-                   uint32_t board_index, char **board_name)
+                          uint32_t board_index, char **board_name)
 {
     const char *local_board_name = VHD_GetBoardModel(board_index);
     *board_name = av_strdup(local_board_name);
@@ -1026,7 +1028,8 @@ get_buffer_packing_based_on_cable_bit_sampling(
     }
 }
 
-static int get_channel_mask_from_nb_channels(VideoMasterContext *videomaster_context)
+static int
+get_channel_mask_from_nb_channels(VideoMasterContext *videomaster_context)
 {
     switch (videomaster_context->audio_nb_channels)
     {
@@ -1176,7 +1179,7 @@ static int get_nb_channels_from_audio_infoframe_and_aes_status(
     return return_code;
 }
 
-static uint32_t get_rx_sdi_board_property_clock_divisor_from_index(uint32_t index)
+static int get_rx_sdi_board_property_clock_divisor_from_index(uint32_t index)
 {
     switch (index)
     {
@@ -1205,7 +1208,9 @@ static uint32_t get_rx_sdi_board_property_clock_divisor_from_index(uint32_t inde
     case 11:
         return VHD_SDI_BP_RX11_CLOCK_DIV;
     default:
-        return VHD_SDI_BP_RX0_CLOCK_DIV;
+        av_log(NULL, AV_LOG_ERROR,
+               "Unsupported channel index for SDI clock divisor: %d\n", index);
+        return -1;
     }
 }
 
@@ -1378,7 +1383,7 @@ static int get_sample_size_from_audio_infoframe_and_aes_status(
 }
 
 static int get_serial_number(VideoMasterContext *videomaster_context,
-                      HANDLE board_handle, char **serial_number)
+                             HANDLE board_handle, char **serial_number)
 {
     uint32_t       serial_number_array[4] = { 0, 0, 0, 0 };
     const uint32_t properties[] = { VHD_CORE_BP_SERIALNUMBER_PART1_LSW,
@@ -1458,7 +1463,7 @@ static int get_videomaster_enumeration_value_for_timestamp_source(
 }
 
 static int handle_av_error(AVFormatContext *avctx, int av_error,
-                    const char *trace_message, const char *error_message)
+                           const char *trace_message, const char *error_message)
 {
     if (av_error == 0 && strcmp(trace_message, "") != 0)
     {
@@ -1472,7 +1477,8 @@ static int handle_av_error(AVFormatContext *avctx, int av_error,
 }
 
 static int handle_vhd_status(AVFormatContext *avctx, VHD_ERRORCODE vhd_status,
-                      const char *success_message, const char *error_message)
+                             const char *success_message,
+                             const char *error_message)
 {
     if (vhd_status == VHDERR_NOERROR && strcmp(success_message, "") != 0)
     {
@@ -1496,7 +1502,7 @@ static int handle_vhd_status(AVFormatContext *avctx, VHD_ERRORCODE vhd_status,
 }
 
 static int init_audio_info(VideoMasterContext *videomaster_context,
-                    VHD_AUDIOINFO      *audio_info)
+                           VHD_AUDIOINFO      *audio_info)
 {
     VHD_AUDIOGROUP   *audio_group = NULL;
     VHD_AUDIOCHANNEL *audio_channel = NULL;
@@ -1687,7 +1693,7 @@ static int unlock_slot(VideoMasterContext *videomaster_context)
 }
 
 static int release_audio_info(VideoMasterContext *videomaster_context,
-                       VHD_AUDIOINFO      *audio_info)
+                              VHD_AUDIOINFO      *audio_info)
 {
     if (audio_info == NULL)
     {
@@ -2246,50 +2252,107 @@ int ff_videomaster_get_video_stream_properties(
     }
     else
     {
-        if (dual_stream)
+        int board_property_clock_divisor =
+            get_rx_sdi_board_property_clock_divisor_from_index(channel_index);
+        VHD_STREAMTYPE stream_type = get_rx_stream_type_from_index(
+            channel_index);
+        if (board_property_clock_divisor == -1)
         {
+            av_log(avctx, AV_LOG_ERROR,
+                   "Unsupported channel index %d for SDI "
+                   "clock divisor board property\n",
+                   channel_index);
+            return AVERROR(EINVAL);
+        }
+
+        if (stream_type == NB_VHD_STREAMTYPES)
+        {
+            av_log(avctx, AV_LOG_ERROR,
+                   "Unsupported channel index %d for SDI "
+                   "stream type\n",
+                   channel_index);
+            return AVERROR(EINVAL);
+        }
+
+        handle_vhd_status(
+            avctx,
+            VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL, channel_index,
+                                   VHD_SDI_CP_VIDEO_STANDARD,
+                                   (uint32_t *)&video_info->sdi.video_standard),
+            "", "");
+
+        if (video_info->sdi.video_standard == NB_VHD_VIDEOSTANDARDS)
+        {
+            if (!dual_stream)
+            {
+                av_log(
+                    avctx, AV_LOG_ERROR,
+                    "Cannot auto-detect video standard for SDI stream. Maybe "
+                    "consider to enable dual stream mode if this is the chosen "
+                    "interface from the input stream ?.\n If not, please "
+                    "contact DELTACAST.TV support.\n");
+                return AVERROR(EIO);
+            }
+
             video_info->sdi.interface = VHD_INTERFACE_3G_B_DS_425_1;
 
-            // must start the stream with correct interface to get auto
-            // detection
             if (local_stream_handle == NULL)
-                handle_vhd_status(avctx,
-                                VHD_OpenStreamHandle(
-                                    board_handle,
-                                    get_rx_stream_type_from_index(channel_index),
-                                    VHD_SDI_STPROC_JOINED, NULL,
-                                    &local_stream_handle, NULL),
-                                "Stream handle opened "
-                                "successfully",
-                                "Failed to open stream "
-                                "handle");
-            VHD_SetStreamProperty(local_stream_handle, VHD_SDI_SP_INTERFACE,
-                                  video_info->sdi.interface);
+                handle_vhd_status(
+                    avctx,
+                    VHD_OpenStreamHandle(board_handle, stream_type,
+                                         VHD_SDI_STPROC_JOINED, NULL,
+                                         &local_stream_handle, NULL),
+                    "Stream handle opened "
+                    "successfully",
+                    "Failed to open stream "
+                    "handle");
 
             handle_vhd_status(avctx,
-                              VHD_GetStreamProperty(
-                                  local_stream_handle, VHD_SDI_SP_VIDEO_STANDARD,
-                                  (uint32_t *)&video_info->sdi.video_standard),
-                              "", "");
-            int status = VHD_StartStream(local_stream_handle);
-
-            handle_vhd_status(avctx,
-                              VHD_GetStreamProperty(
-                                  local_stream_handle, VHD_SDI_SP_VIDEO_STANDARD,
-                                  (uint32_t *)&video_info->sdi.video_standard),
-                              "", "");
+                              VHD_SetStreamProperty(local_stream_handle,
+                                                    VHD_SDI_SP_INTERFACE,
+                                                    video_info->sdi.interface),
+                              "",
+                              "Failed to set VHD_INTERFACE_3G_B_DS_425_1 "
+                              "interface on stream handle");
 
             handle_vhd_status(
-                avctx,
-                VHD_GetBoardProperty(
-                    board_handle,
-                    get_rx_sdi_board_property_clock_divisor_from_index(
-                        channel_index),
-                    (uint32_t *)&video_info->sdi.clock_divisor),
-                "", "");
-            if (status == VHDERR_NOERROR)
+                avctx, VHD_StartStream(local_stream_handle), "",
+                "Failed to start stream to detect video properties");
+
+            handle_vhd_status(avctx,
+                              VHD_GetStreamProperty(
+                                  local_stream_handle,
+                                  VHD_SDI_SP_VIDEO_STANDARD,
+                                  (uint32_t *)&video_info->sdi.video_standard),
+                              "", "");
+
+            if (video_info->sdi.video_standard == NB_VHD_VIDEOSTANDARDS)
+            {
+                av_log(avctx, AV_LOG_ERROR,
+                       "Video standard could not be detected from a dual "
+                       "stream\n");
                 VHD_StopStream(local_stream_handle);
-            VHD_CloseStreamHandle(local_stream_handle);
+                if (stream_handle == NULL)
+                    VHD_CloseStreamHandle(local_stream_handle);
+                return AVERROR(EIO);
+            }
+
+            handle_vhd_status(avctx,
+                              VHD_GetBoardProperty(
+                                  board_handle, board_property_clock_divisor,
+                                  (uint32_t *)&video_info->sdi.clock_divisor),
+                              "", "");
+
+            handle_vhd_status(avctx, VHD_StopStream(local_stream_handle), "",
+                              "Failed to stop stream");
+
+            if (stream_handle == NULL)
+                handle_vhd_status(avctx,
+                                  VHD_CloseStreamHandle(local_stream_handle),
+                                  "Stream handle closed "
+                                  "successfully",
+                                  "Failed to close stream "
+                                  "handle");
         }
         else
         {
@@ -2299,12 +2362,6 @@ int ff_videomaster_get_video_stream_properties(
                                        channel_index, VHD_SDI_CP_INTERFACE,
                                        (uint32_t *)&video_info->sdi.interface),
                 "", "");
-            handle_vhd_status(avctx,
-                              VHD_GetChannelProperty(
-                                  board_handle, VHD_RX_CHANNEL, channel_index,
-                                  VHD_SDI_CP_VIDEO_STANDARD,
-                                  (uint32_t *)&video_info->sdi.video_standard),
-                              "", "");
 
             handle_vhd_status(avctx,
                               VHD_GetChannelProperty(
@@ -2340,6 +2397,7 @@ int ff_videomaster_get_video_stream_properties(
                    "Unsupported clock "
                    "divisor: %d\n",
                    video_info->sdi.clock_divisor);
+            return AVERROR(EIO);
         }
     }
 
