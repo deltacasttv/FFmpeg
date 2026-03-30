@@ -54,15 +54,17 @@ static int check_board_index(VideoMasterContext *videomaster_context);
 static int check_channel_index(VideoMasterContext *videomaster_context);
 
 /**
- * @brief Checks the integrity of the channel
- * index argument in the VideoMaster context. Calling this function may
- * override audio_nb_channels, audio_sample_rate, and audio_sample_size.
- * Call this function after verifying the integrity of the audio properties
- * using the check_audio_properties function.
- * @param videomaster_context VideoMasterContext
- * pointer to the VideoMaster context
- * @return int  0 on success, or negative AVERROR
- * code on failure
+ * @brief Validates channel settings in the VideoMaster context.
+ *
+ *        This function may update audio_nb_channels, audio_sample_rate, and
+ *        audio_sample_size. Call it only after check_audio_properties() and
+ *        check_channel_index() have succeeded.
+ *        It verifies channel lock state, retrieves stream properties, and may
+ *        open a stream handle.
+ *
+ * @param videomaster_context VideoMasterContext pointer to the VideoMaster
+ * context
+ * @return int  0 on success, or negative AVERROR code on failure
  */
 static int check_channel_integrity(VideoMasterContext *videomaster_context);
 
@@ -471,7 +473,7 @@ static int check_header_arguments(VideoMasterContext *videomaster_context)
     if ((status = check_channel_index(videomaster_context)) != 0)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
-               "Failed to check channel integrity\n");
+               "Failed to check channel index range\n");
         ff_videomaster_close_board_handle(videomaster_context);
         return status;
     }

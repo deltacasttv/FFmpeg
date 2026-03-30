@@ -2289,7 +2289,8 @@ int ff_videomaster_get_video_stream_properties(
                    "Failed to get total width from stream properties for "
                    "HDMI channel %u\n",
                    channel_index);
-            VHD_CloseStreamHandle(local_stream_handle);
+            if (stream_handle == NULL)
+                VHD_CloseStreamHandle(local_stream_handle);
             return av_status;
         }
 
@@ -2304,7 +2305,8 @@ int ff_videomaster_get_video_stream_properties(
                    "Failed to get total height from stream properties for "
                    "HDMI channel %u\n",
                    channel_index);
-            VHD_CloseStreamHandle(local_stream_handle);
+            if (stream_handle == NULL)
+                VHD_CloseStreamHandle(local_stream_handle);
             return av_status;
         }
 
