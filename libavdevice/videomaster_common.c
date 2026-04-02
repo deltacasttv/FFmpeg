@@ -66,6 +66,13 @@ static const VideoMasterBufferPackingInfo buffer_packing_info_table[] = {
       1,
       1,
       false },
+    { AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_P010,
+      false,
+      { .pixel_format = AV_PIX_FMT_P010LE },
+      24,
+      1,
+      1,
+      false },
     { AV_VIDEOMASTER_BUFFER_PACKING_RGB_32,
       false,
       { .pixel_format = AV_PIX_FMT_BGR0 },
@@ -1023,6 +1030,8 @@ get_buffer_packing_based_on_cable_bit_sampling(
     {
     case VHD_DV_SAMPLING_4_2_0_8BITS:
         return AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_NV12;
+    case VHD_DV_SAMPLING_4_2_0_10BITS:
+        return AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_P010;
     default:
         return AV_VIDEOMASTER_BUFFER_PACKING_YUV422_10;
     }

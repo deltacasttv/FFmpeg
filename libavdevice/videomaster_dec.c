@@ -1575,6 +1575,15 @@ static const AVOption options[] = {
       0,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       .unit = "buffer_packing_value" },
+    { "PLANAR_P010",
+      NULL,
+      0,
+      AV_OPT_TYPE_CONST,
+      { .i64 = AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_P010 },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM | DEC | AV_OPT_FLAG_VIDEO_PARAM,
+      .unit = "buffer_packing_value" },
     { "dual_stream",
       "Force 3G-B dual stream interface (that cannot be auto-detected). A 3G "
       "Level B-DS stream received on the RX0 physical connector is split into "
