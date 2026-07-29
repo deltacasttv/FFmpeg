@@ -14,6 +14,9 @@
 #include "libavutil/time.h"
 
 #include "videomaster_common.h"
+#include "videomaster_hdmi.h"
+#include "videomaster_ip.h"
+#include "videomaster_sdi.h"
 
 #if defined(__APPLE__)
 #include <VideoMasterHD/VideoMasterHD_Core.h>
@@ -81,11 +84,14 @@ static int check_dual_stream(VideoMasterContext *videomaster_context);
 /**
  * @brief Checks the integrity of all arguments passed in the FFmpeg
  * command-line in the VideoMaster context.
+ * @param videomaster_data VideoMasterData pointer to parsed command-line
+ * options.
  * @param videomaster_context VideoMasterContext pointer to the VideoMaster
  * context
  * @return int  0 on success, or negative AVERROR code on failure
  */
-static int check_header_arguments(VideoMasterContext *videomaster_context);
+static int check_header_arguments(VideoMasterData    *videomaster_data,
+                                  VideoMasterContext *videomaster_context);
 
 /**
  * @brief Checks the integrity of the timestamp source argument in the
@@ -95,6 +101,34 @@ static int check_header_arguments(VideoMasterContext *videomaster_context);
  * @return int  0 on success, or negative AVERROR code on failure
  */
 static int check_timestamp_source(VideoMasterContext *videomaster_context);
+
+/**
+ * @brief   Extracts the VideoMaster context from the AVFormatContext or logs an
+ * error if it fails.
+ *
+ * @param avctx AVFormatContext pointer to the FFmpeg context
+ * @param videomaster_data VideoMasterData pointer to store extracted data
+ * @param videomaster_context VideoMasterContext pointer to store extracted
+ * context
+ * @return int  0 on success, or negative AVERROR code on failure
+ */
+static int extract_context_or_log(AVFormatContext     *avctx,
+                                  VideoMasterData    **videomaster_data,
+                                  VideoMasterContext **videomaster_context);
+
+/**
+ * @brief Common error handling for board-only operations
+ *
+ * This function handles errors that occur before the stream is started by
+ * logging the error message and closing the board handle.
+ *
+ * @param ctx Pointer to the VideoMaster context
+ * @param message Error message to log
+ * @param error_code Error code to return
+ * @return int 0 on success, or negative AVERROR code on failure
+ */
+static int handle_board_error(VideoMasterContext *ctx, const char *message,
+                              int error_code);
 
 /**
  * @brief Common error handling for stream operations
@@ -121,6 +155,15 @@ static int handle_stream_error(VideoMasterContext *ctx, const char *message,
  * @return int  0 on success, or negative AVERROR code on failure
  */
 static int parse_command_line_arguments(AVFormatContext *avctx);
+
+/**
+ * @brief Parses an IPv4 address from dotted notation to a 32-bit value.
+ *
+ * @param ip_string IPv4 address in dotted notation (a.b.c.d)
+ * @param out_address Pointer to store parsed 32-bit address
+ * @return int  0 on success, or negative AVERROR code on failure
+ */
+static int parse_ipv4_address(const char *ip_string, uint32_t *out_address);
 
 /**
  * @brief  Sets up the FFmpeg audio stream based on the VideoMaster context
@@ -173,36 +216,13 @@ static int check_audio_properties(VideoMasterContext *videomaster_context)
         ff_videomaster_get_channel_type_from_index(
             videomaster_context->avctx, videomaster_context->board_handle,
             videomaster_context->channel_index);
-    if (channel_type == AV_VIDEOMASTER_CHANNEL_HDMI &&
-        (videomaster_context->audio_nb_channels != -1 ||
-         videomaster_context->audio_sample_rate != -1 ||
-         videomaster_context->audio_sample_size != -1))
-    {
-        av_log(videomaster_context->avctx, AV_LOG_WARNING,
-               "Audio properties are not applicable for HDMI channels. These "
-               "value will be overridden with auto-detection.\n");
-    }
+
+    if (channel_type == AV_VIDEOMASTER_CHANNEL_HDMI)
+        return ff_videomaster_check_audio_properties_hdmi(videomaster_context);
+    else if (channel_type == AV_VIDEOMASTER_CHANNEL_IP_2110)
+        return ff_videomaster_check_audio_properties_ip(videomaster_context);
     else
-    {
-        if (videomaster_context->audio_nb_channels == -1 ||
-            videomaster_context->audio_sample_rate ==
-                AV_VIDEOMASTER_SAMPLE_RATE_UNKNOWN ||
-            videomaster_context->audio_sample_size ==
-                AV_VIDEOMASTER_SAMPLE_SIZE_UNKNOWN)
-        {
-            av_log(videomaster_context->avctx, AV_LOG_WARNING,
-                   "Invalid audio properties: "
-                   "audio_nb_channels=%d, audio_sample_rate=%s, "
-                   "audio_sample_size=%s. Audio will be ignored if audio "
-                   "stream is present.\n",
-                   (int)videomaster_context->audio_nb_channels,
-                   ff_videomaster_sample_rate_to_string(
-                       videomaster_context->audio_sample_rate),
-                   ff_videomaster_sample_size_to_string(
-                       videomaster_context->audio_sample_size));
-        }
-    }
-    return 0;
+        return ff_videomaster_check_audio_properties_sdi(videomaster_context);
 }
 
 static int check_board_index(VideoMasterContext *videomaster_context)
@@ -292,7 +312,14 @@ static int check_channel_integrity(VideoMasterContext *videomaster_context)
     videomaster_context->has_video = false;
     videomaster_context->has_audio = false;
 
-    if (!ff_videomaster_is_channel_locked(videomaster_context) &&
+    videomaster_context->channel_type =
+        ff_videomaster_get_channel_type_from_index(
+            videomaster_context->avctx, videomaster_context->board_handle,
+            videomaster_context->channel_index);
+
+    /* Early exit: channel not locked and not IP */
+    if (videomaster_context->channel_type != AV_VIDEOMASTER_CHANNEL_IP_2110 &&
+        !ff_videomaster_is_channel_locked(videomaster_context) &&
         !videomaster_context->dual_stream)
     {
         av_log(videomaster_context->avctx, AV_LOG_TRACE,
@@ -300,159 +327,18 @@ static int check_channel_integrity(VideoMasterContext *videomaster_context)
                videomaster_context->channel_index);
         return 0;
     }
+
+    /* Tech-specific validation and property retrieval */
+    if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_IP_2110)
+        return ff_videomaster_check_channel_integrity_ip(videomaster_context);
+    else if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_HDMI)
+        return ff_videomaster_check_channel_integrity_hdmi(videomaster_context);
     else
-    {
-        av_log(videomaster_context->avctx, AV_LOG_TRACE,
-               "Channel index is valid\n");
-        if (ff_videomaster_get_video_stream_properties(
-                videomaster_context->avctx, videomaster_context->board_handle,
-                videomaster_context->stream_handle,
-                videomaster_context->channel_index,
-                &videomaster_context->channel_type,
-                &videomaster_context->video_info,
-                &videomaster_context->video_width,
-                &videomaster_context->video_height,
-                &videomaster_context->video_frame_rate_num,
-                &videomaster_context->video_frame_rate_den,
-                &videomaster_context->video_interlaced,
-                videomaster_context->dual_stream) == 0)
-        {
-            videomaster_context->has_video = true;
-            float frame_rate =
-                (float)videomaster_context->video_frame_rate_num /
-                videomaster_context->video_frame_rate_den;
-            if (videomaster_context->channel_type ==
-                AV_VIDEOMASTER_CHANNEL_HDMI)
-            {
-                av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                       "Stream properties: %ux%u@%.3f %s %s\n",
-                       videomaster_context->video_width,
-                       videomaster_context->video_height, frame_rate,
-                       VHD_DV_CS_ToPrettyString(
-                           videomaster_context->video_info.hdmi.color_space),
-                       VHD_DV_SAMPLING_ToPrettyString(
-                           videomaster_context->video_info.hdmi
-                               .cable_bit_sampling));
-                av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                       "Pixel clock: %u\n",
-                       videomaster_context->video_info.hdmi.pixel_clock);
-                av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                       "Interlaced: %s\n",
-                       videomaster_context->video_interlaced ? "true"
-                                                             : "false");
-                av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                       "Color space: %s\n",
-                       VHD_DV_CS_ToPrettyString(
-                           videomaster_context->video_info.hdmi.color_space));
-                av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                       "Cable bit sampling: %s\n",
-                       VHD_DV_SAMPLING_ToPrettyString(
-                           videomaster_context->video_info.hdmi
-                               .cable_bit_sampling));
-                av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                       "Selected Buffer Packing: %s\n",
-                       VHD_BUFFERPACKING_ToPrettyString(
-                           videomaster_context->video_buffer_packing));
-            }
-            else
-            {
-                av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                       "Stream properties: %ux%u@%.3f %s %s\n",
-                       videomaster_context->video_width,
-                       videomaster_context->video_height, frame_rate,
-                       VHD_VIDEOSTANDARD_ToPrettyString(
-                           videomaster_context->video_info.sdi.video_standard),
-                       VHD_CLOCKDIVISOR_ToPrettyString(
-                           videomaster_context->video_info.sdi.clock_divisor));
-                av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                       "Interface: %s\n",
-                       VHD_INTERFACE_ToPrettyString(
-                           videomaster_context->video_info.sdi.interface));
-            }
-
-            if (ff_videomaster_open_stream_handle(videomaster_context) == 0)
-            {
-                av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                       "Stream handle opened successfully\n");
-            }
-            else
-            {
-                av_log(videomaster_context->avctx, AV_LOG_ERROR,
-                       "Failed to open stream handle.\n");
-                return AVERROR(EIO);
-            }
-        }
-        else
-        {
-            av_log(videomaster_context->avctx, AV_LOG_ERROR,
-                   "Failed to get stream properties\n");
-            return AVERROR(EIO);
-        }
-
-        if (ff_videomaster_get_audio_stream_properties(
-                videomaster_context->avctx, videomaster_context->board_handle,
-                videomaster_context->stream_handle,
-                videomaster_context->channel_index,
-                videomaster_context->video_buffer_packing,
-                &videomaster_context->channel_type,
-                &videomaster_context->audio_info,
-                &videomaster_context->audio_sample_rate,
-                &videomaster_context->audio_nb_channels,
-                &videomaster_context->audio_sample_size,
-                &videomaster_context->audio_codec) == 0)
-        {
-            if (videomaster_context->channel_type ==
-                AV_VIDEOMASTER_CHANNEL_HDMI)
-            {
-                if (videomaster_context->audio_sample_size != 0 &&
-                    videomaster_context->audio_nb_channels != 0)
-                {
-                    videomaster_context->has_audio = true;
-                    av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                           "Audio properties: %u channels @%uHz (%u bits)\n",
-                           videomaster_context->audio_nb_channels,
-                           videomaster_context->audio_sample_rate,
-                           videomaster_context->audio_sample_size);
-                }
-                else
-                {
-                    av_log(videomaster_context->avctx, AV_LOG_WARNING,
-                           "Audio properties: No audio detected\n");
-                }
-            }
-            else
-            {
-                if (videomaster_context->audio_sample_size !=
-                        AV_VIDEOMASTER_SAMPLE_SIZE_UNKNOWN &&
-                    videomaster_context->audio_sample_rate !=
-                        AV_VIDEOMASTER_SAMPLE_RATE_UNKNOWN &&
-                    videomaster_context->audio_nb_channels != 0)
-                {
-                    videomaster_context->has_audio = true;
-                    av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                           "Audio properties: %u channels @%uHz (%u bits)\n",
-                           videomaster_context->audio_nb_channels,
-                           videomaster_context->audio_sample_rate,
-                           videomaster_context->audio_sample_size);
-                }
-                else
-                {
-                    av_log(videomaster_context->avctx, AV_LOG_WARNING,
-                           "Audio properties: No audio detected\n");
-                }
-            }
-        }
-        else
-        {
-            av_log(videomaster_context->avctx, AV_LOG_WARNING,
-                   "Failed to get audio properties\n");
-        }
-    }
-
-    return 0;
+        return ff_videomaster_check_channel_integrity_sdi(videomaster_context);
 }
 
-static int check_header_arguments(VideoMasterContext *videomaster_context)
+static int check_header_arguments(VideoMasterData    *videomaster_data,
+                                  VideoMasterContext *videomaster_context)
 {
     int status = 0;
     if ((status = check_board_index(videomaster_context)) != 0)
@@ -464,34 +350,63 @@ static int check_header_arguments(VideoMasterContext *videomaster_context)
 
     if ((status = check_audio_properties(videomaster_context)) != 0)
     {
-        av_log(videomaster_context->avctx, AV_LOG_ERROR,
-               "Failed to check audio properties integrity\n");
-        ff_videomaster_close_board_handle(videomaster_context);
-        return status;
+        return handle_board_error(videomaster_context,
+                                  "Failed to check audio properties integrity",
+                                  status);
     }
 
     if ((status = check_channel_index(videomaster_context)) != 0)
     {
-        av_log(videomaster_context->avctx, AV_LOG_ERROR,
-               "Failed to check channel index range\n");
-        ff_videomaster_close_board_handle(videomaster_context);
-        return status;
+        return handle_board_error(videomaster_context,
+                                  "Failed to check channel index range",
+                                  status);
     }
 
     if ((status = check_dual_stream(videomaster_context)) != 0)
     {
-        av_log(videomaster_context->avctx, AV_LOG_ERROR,
-               "Failed to check dual-stream integrity\n");
-        ff_videomaster_close_board_handle(videomaster_context);
-        return status;
+        return handle_board_error(videomaster_context,
+                                  "Failed to check dual-stream integrity",
+                                  status);
     }
 
     if ((status = check_channel_integrity(videomaster_context)) != 0)
     {
-        av_log(videomaster_context->avctx, AV_LOG_ERROR,
-               "Failed to check channel index integrity\n");
-        ff_videomaster_close_board_handle(videomaster_context);
-        return status;
+        return handle_board_error(videomaster_context,
+                                  "Failed to check channel index integrity",
+                                  status);
+    }
+
+    /* Validate tech-specific arguments after channel_type is known */
+    if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_HDMI)
+    {
+        if ((status = ff_videomaster_validate_arguments_hdmi(
+                 videomaster_data, videomaster_context)) != 0)
+        {
+            return handle_board_error(videomaster_context,
+                                      "Invalid arguments for HDMI channel",
+                                      status);
+        }
+    }
+    else if (videomaster_context->channel_type ==
+             AV_VIDEOMASTER_CHANNEL_IP_2110)
+    {
+        if ((status = ff_videomaster_validate_arguments_ip(
+                 videomaster_data, videomaster_context)) != 0)
+        {
+            return handle_board_error(videomaster_context,
+                                      "Invalid arguments for IP 2110 channel",
+                                      status);
+        }
+    }
+    else
+    {
+        if ((status = ff_videomaster_validate_arguments_sdi(
+                 videomaster_data, videomaster_context)) != 0)
+        {
+            return handle_board_error(videomaster_context,
+                                      "Invalid arguments for SDI channel",
+                                      status);
+        }
     }
 
     if ((status = check_timestamp_source(videomaster_context)) != 0)
@@ -628,6 +543,28 @@ static int check_timestamp_source(VideoMasterContext *videomaster_context)
     return 0;
 }
 
+static int extract_context_or_log(AVFormatContext     *avctx,
+                                  VideoMasterData    **videomaster_data,
+                                  VideoMasterContext **videomaster_context)
+{
+    if (ff_videomaster_extract_context(avctx, videomaster_data,
+                                       videomaster_context) != 0)
+    {
+        av_log(avctx, AV_LOG_ERROR, "Failed to extract context\n");
+        return AVERROR(EINVAL);
+    }
+
+    return 0;
+}
+
+static int handle_board_error(VideoMasterContext *ctx, const char *message,
+                              int error_code)
+{
+    av_log(ctx->avctx, AV_LOG_ERROR, "%s\n", message);
+    ff_videomaster_close_board_handle(ctx);
+    return error_code;
+}
+
 static int handle_stream_error(VideoMasterContext *ctx, const char *message,
                                int error_code)
 {
@@ -642,10 +579,9 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
     struct VideoMasterData    *videomaster_data = NULL;
     struct VideoMasterContext *videomaster_context = NULL;
 
-    if (ff_videomaster_extract_context(avctx, &videomaster_data,
-                                       &videomaster_context) != 0)
+    if (extract_context_or_log(avctx, &videomaster_data,
+                               &videomaster_context) != 0)
     {
-        av_log(avctx, AV_LOG_ERROR, "Failed to extract context\n");
         return AVERROR(EINVAL);
     }
     else
@@ -692,7 +628,7 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
                 av_log(avctx, AV_LOG_ERROR,
                        "Unknown stream selected : \"%s\". Please use \"ffmpeg "
                        "-sources "
-                       "videmaster\" and "
+                       "videomaster\" and "
                        "use the correct source name.\n",
                        avctx->url);
                 return AVERROR(EINVAL);
@@ -731,6 +667,58 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
         videomaster_context->video_buffer_packing =
             videomaster_data->buffer_packing;
         videomaster_context->dual_stream = videomaster_data->dual_stream;
+
+        /* Configure IP parameters if all required fields are provided */
+        if (videomaster_data->ip_video_width > 0 &&
+            videomaster_data->ip_video_height > 0 &&
+            videomaster_data->ip_video_framerate_num > 0 &&
+            videomaster_data->ip_video_framerate_den > 0 &&
+            videomaster_data->ip_video_interlaced >= 0 &&
+            videomaster_data->ip_video_bit_depth > 0 &&
+            videomaster_data->ip_destination != NULL)
+        {
+            if (parse_ipv4_address(videomaster_data->ip_destination,
+                                   &videomaster_context->ip_destination) < 0)
+            {
+                av_log(avctx, AV_LOG_ERROR,
+                       "Invalid IPv4 address for ip_destination: %s\n",
+                       videomaster_data->ip_destination);
+                return AVERROR(EINVAL);
+            }
+
+            if (videomaster_data->ip_video_bit_depth != 8 &&
+                videomaster_data->ip_video_bit_depth != 10)
+            {
+                av_log(avctx, AV_LOG_ERROR,
+                       "Invalid ip_video_bit_depth value: %" PRId64
+                       " (expected 8 or 10)\n",
+                       videomaster_data->ip_video_bit_depth);
+                return AVERROR(EINVAL);
+            }
+
+            videomaster_context->ip_udp_port =
+                videomaster_data->ip_udp_port > 0
+                    ? (uint32_t)videomaster_data->ip_udp_port
+                    : 0;
+            videomaster_context->ip_payload_type =
+                videomaster_data->ip_payload_type > 0
+                    ? (uint32_t)videomaster_data->ip_payload_type
+                    : 0;
+            videomaster_context->video_width =
+                (uint32_t)videomaster_data->ip_video_width;
+            videomaster_context->video_height =
+                (uint32_t)videomaster_data->ip_video_height;
+            videomaster_context->video_frame_rate_num =
+                (uint32_t)videomaster_data->ip_video_framerate_num;
+            videomaster_context->video_frame_rate_den =
+                (uint32_t)videomaster_data->ip_video_framerate_den;
+            videomaster_context->video_interlaced =
+                !!videomaster_data->ip_video_interlaced;
+            videomaster_context->ip_video_depth =
+                videomaster_data->ip_video_bit_depth == 10
+                    ? VHD_ST2110_20_DEPTH_10BIT
+                    : VHD_ST2110_20_DEPTH_8BIT;
+        }
     }
 
     av_log(avctx, AV_LOG_INFO,
@@ -742,6 +730,46 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
            VHD_BUFFERPACKING_ToPrettyString(
                videomaster_context->video_buffer_packing));
 
+    if (videomaster_context->ip_destination != 0)
+    {
+        av_log(avctx, AV_LOG_INFO,
+               "IP 2110 explicit mode: destination=%s, udp_port=%u, "
+               "payload_type=%u, video=%ux%u@%u/%u %s, depth=%s\n",
+               videomaster_data->ip_destination,
+               videomaster_context->ip_udp_port,
+               videomaster_context->ip_payload_type,
+               videomaster_context->video_width,
+               videomaster_context->video_height,
+               videomaster_context->video_frame_rate_num,
+               videomaster_context->video_frame_rate_den,
+               videomaster_context->video_interlaced ? "interlaced"
+                                                     : "progressive",
+               videomaster_context->ip_video_depth == VHD_ST2110_20_DEPTH_10BIT
+                   ? "10-bit"
+                   : "8-bit");
+    }
+
+    return 0;
+}
+
+static int parse_ipv4_address(const char *ip_string, uint32_t *out_address)
+{
+    unsigned int a = 0;
+    unsigned int b = 0;
+    unsigned int c = 0;
+    unsigned int d = 0;
+    char         tail = 0;
+
+    if (!ip_string || !out_address)
+        return AVERROR(EINVAL);
+
+    if (sscanf(ip_string, "%u.%u.%u.%u%c", &a, &b, &c, &d, &tail) != 4)
+        return AVERROR(EINVAL);
+
+    if (a > 255 || b > 255 || c > 255 || d > 255)
+        return AVERROR(EINVAL);
+
+    *out_address = (a << 24) | (b << 16) | (c << 8) | d;
     return 0;
 }
 
@@ -845,10 +873,9 @@ int ff_videomaster_list_input_devices(AVFormatContext         *avctx,
     struct VideoMasterData    *videomaster_data = NULL;
     struct VideoMasterContext *videomaster_context = NULL;
 
-    if (ff_videomaster_extract_context(avctx, &videomaster_data,
-                                       &videomaster_context) != 0)
+    if (extract_context_or_log(avctx, &videomaster_data,
+                               &videomaster_context) != 0)
     {
-        av_log(avctx, AV_LOG_ERROR, "Failed to extract context\n");
         return AVERROR(EINVAL);
     }
 
@@ -891,10 +918,9 @@ int ff_videomaster_read_close(AVFormatContext *avctx)
     int                        return_code = 0;
     struct VideoMasterData    *videomaster_data = NULL;
     struct VideoMasterContext *videomaster_context = NULL;
-    if (ff_videomaster_extract_context(avctx, &videomaster_data,
-                                       &videomaster_context) != 0)
+    if (extract_context_or_log(avctx, &videomaster_data,
+                               &videomaster_context) != 0)
     {
-        av_log(avctx, AV_LOG_ERROR, "Failed to extract context\n");
         return AVERROR(EINVAL);
     }
 
@@ -959,10 +985,9 @@ int ff_videomaster_read_header(AVFormatContext *avctx)
     struct VideoMasterData    *videomaster_data = NULL;
     struct VideoMasterContext *videomaster_context = NULL;
 
-    if (ff_videomaster_extract_context(avctx, &videomaster_data,
-                                       &videomaster_context) != 0)
+    if (extract_context_or_log(avctx, &videomaster_data,
+                               &videomaster_context) != 0)
     {
-        av_log(avctx, AV_LOG_ERROR, "Failed to extract context\n");
         return AVERROR(EINVAL);
     }
 
@@ -979,7 +1004,7 @@ int ff_videomaster_read_header(AVFormatContext *avctx)
         return AVERROR(EIO);
     }
 
-    if (check_header_arguments(videomaster_context) != 0)
+    if (check_header_arguments(videomaster_data, videomaster_context) != 0)
     {
         av_log(avctx, AV_LOG_ERROR,
                "Failed to check header arguments integrity\n");
@@ -1010,10 +1035,9 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
     struct VideoMasterData    *videomaster_data = NULL;
     struct VideoMasterContext *videomaster_context = NULL;
 
-    if (ff_videomaster_extract_context(avctx, &videomaster_data,
-                                       &videomaster_context) != 0)
+    if (extract_context_or_log(avctx, &videomaster_data,
+                               &videomaster_context) != 0)
     {
-        av_log(avctx, AV_LOG_ERROR, "Failed to extract context\n");
         return AVERROR(EINVAL);
     }
 
@@ -1615,6 +1639,88 @@ static const AVOption options[] = {
       { .i64 = 0 },
       0,
       1,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
+      NULL },
+    { "ip_destination",
+      "IPv4 destination address for main ST2110 stream in explicit mode.",
+      OFFSET(ip_destination),
+      AV_OPT_TYPE_STRING,
+      { .str = NULL },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
+      NULL },
+    { "ip_udp_port",
+      "UDP destination port for main ST2110 stream in explicit mode.",
+      OFFSET(ip_udp_port),
+      AV_OPT_TYPE_INT64,
+      { .i64 = 0 },
+      0,
+      65535,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
+      NULL },
+    { "ip_payload_type",
+      "RTP payload type for main ST2110 stream in explicit mode.",
+      OFFSET(ip_payload_type),
+      AV_OPT_TYPE_INT64,
+      { .i64 = 0 },
+      0,
+      127,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
+      NULL },
+    { "ip_video_width",
+      "Video width for explicit ST2110 stream mode.",
+      OFFSET(ip_video_width),
+      AV_OPT_TYPE_INT64,
+      { .i64 = -1 },
+      -1,
+      INT_MAX,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
+      NULL },
+    { "ip_video_height",
+      "Video height for explicit ST2110 stream mode.",
+      OFFSET(ip_video_height),
+      AV_OPT_TYPE_INT64,
+      { .i64 = -1 },
+      -1,
+      INT_MAX,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
+      NULL },
+    { "ip_video_framerate_num",
+      "Video framerate numerator for explicit ST2110 stream mode.",
+      OFFSET(ip_video_framerate_num),
+      AV_OPT_TYPE_INT64,
+      { .i64 = -1 },
+      -1,
+      INT_MAX,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
+      NULL },
+    { "ip_video_framerate_den",
+      "Video framerate denominator for explicit ST2110 stream mode.",
+      OFFSET(ip_video_framerate_den),
+      AV_OPT_TYPE_INT64,
+      { .i64 = -1 },
+      -1,
+      INT_MAX,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
+      NULL },
+    { "ip_video_interlaced",
+      "Interlaced flag for explicit ST2110 stream mode (0 progressive, 1 "
+      "interlaced).",
+      OFFSET(ip_video_interlaced),
+      AV_OPT_TYPE_INT64,
+      { .i64 = -1 },
+      -1,
+      1,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
+      NULL },
+    { "ip_video_bit_depth",
+      "Bit depth for explicit ST2110 stream mode (8 or 10).",
+      OFFSET(ip_video_bit_depth),
+      AV_OPT_TYPE_INT64,
+      { .i64 = -1 },
+      -1,
+      10,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
     { NULL },

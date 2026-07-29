@@ -37,6 +37,9 @@
 #include <VideoMasterHD/VideoMasterHD_Core.h>
 #include <VideoMasterHD/VideoMasterHD_Dv.h>
 #include <VideoMasterHD/VideoMasterHD_Dv_Audio.h>
+#include <VideoMasterHD/VideoMasterHD_Ip_Board.h>
+#include <VideoMasterHD/VideoMasterHD_Ip_ST2110_20.h>
+#include <VideoMasterHD/VideoMasterHD_Ip_ST2110_Board.h>
 #include <VideoMasterHD/VideoMasterHD_Sdi.h>
 #include <VideoMasterHD/VideoMasterHD_Sdi_Audio.h>
 #include <VideoMasterHD/VideoMasterHD_String.h>
@@ -44,6 +47,9 @@
 #include <VideoMasterHD_Core.h>
 #include <VideoMasterHD_Dv.h>
 #include <VideoMasterHD_Dv_Audio.h>
+#include <VideoMasterHD_Ip_Board.h>
+#include <VideoMasterHD_Ip_ST2110_20.h>
+#include <VideoMasterHD_Ip_ST2110_Board.h>
 #include <VideoMasterHD_Sdi.h>
 #include <VideoMasterHD_Sdi_Audio.h>
 #include <VideoMasterHD_String.h>
@@ -61,6 +67,7 @@ enum AVVideoMasterChannelType
     AV_VIDEOMASTER_CHANNEL_HDMI,
     AV_VIDEOMASTER_CHANNEL_ASISDI,
     AV_VIDEOMASTER_CHANNEL_SDI,
+    AV_VIDEOMASTER_CHANNEL_IP_2110,
     AV_VIDEOMASTER_CHANNEL_UNKNOWN
 };
 
@@ -263,6 +270,16 @@ typedef struct VideoMasterContext
     enum AVVideoMasterBufferPacking
         video_buffer_packing;  ///< buffer packing format
 
+    /* IP ST2110 explicit mode fields.
+     * Main port is always VHD_IP_BRD_ETHERNETPORT_ETH_0 for the main
+     * stream. SPS will use VHD_IP_BRD_ETHERNETPORT_ETH_1 when added.
+     */
+    uint32_t                     ip_destination;
+    uint32_t                     ip_udp_port;
+    uint32_t                     ip_payload_type;
+    VHD_ST2110_20_VIDEO_STANDARD ip_video_standard;
+    VHD_ST2110_20_DEPTH          ip_video_depth;
+
     bool
         return_video_next;  ///< true if the next video frame should be returned
     float ltc_frame_rate;   ///< frame rate for LTC timestamp calculation
@@ -322,6 +339,16 @@ typedef struct VideoMasterData
     int64_t buffer_packing;    ///< buffer packing format
     int64_t dual_stream;  ///< 0/1 if the stream must be configured with 3G-B-DS
                           ///< interface
+
+    char   *ip_destination;
+    int64_t ip_udp_port;
+    int64_t ip_payload_type;
+    int64_t ip_video_width;
+    int64_t ip_video_height;
+    int64_t ip_video_framerate_num;
+    int64_t ip_video_framerate_den;
+    int64_t ip_video_interlaced;
+    int64_t ip_video_bit_depth;
 } VideoMasterData;
 
 /**

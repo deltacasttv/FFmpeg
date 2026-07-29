@@ -1,39 +1,21 @@
-#include "videomaster_common.h"
 #include "libavutil/avstring.h"
 #include "libavutil/log.h"
 #include "libavutil/mem.h"
+#include "videomaster_hdmi.h"
+#include "videomaster_internal.h"
+#include "videomaster_ip.h"
+#include "videomaster_sdi.h"
 #include <stdio.h>
 
 #if defined(__APPLE__)
 #include <VideoMasterHD/VideoMasterHD_Core.h>
+#include <VideoMasterHD/VideoMasterHD_Ip_ST2110_Board.h>
 #include <VideoMasterHD/VideoMasterHD_String.h>
 #else
 #include <VideoMasterHD_Core.h>
+#include <VideoMasterHD_Ip_ST2110_Board.h>
 #include <VideoMasterHD_String.h>
 #endif
-
-#define GET_AND_CHECK(func, avctx, ...)                                        \
-    do                                                                         \
-    {                                                                          \
-        av_error = func(__VA_ARGS__);                                          \
-        if (av_error != 0)                                                     \
-        {                                                                      \
-            av_log(avctx, AV_LOG_TRACE, "Early ending of function.\n");        \
-            return av_error;                                                   \
-        }                                                                      \
-    } while (0)
-
-#define GET_AND_CHECK_AND_STOP_STREAM(func, avctx, ...)                        \
-    do                                                                         \
-    {                                                                          \
-        av_error = func(__VA_ARGS__);                                          \
-        if (av_error != 0)                                                     \
-        {                                                                      \
-            av_log(avctx, AV_LOG_TRACE, "Early ending of function.\n");        \
-            ff_videomaster_stop_stream(videomaster_context);                   \
-            return av_error;                                                   \
-        }                                                                      \
-    } while (0)
 
 /** static tables */
 
@@ -177,6 +159,23 @@ static char *format_device_description(VideoMasterContext *videomaster_context,
                                        const char         *serial_number);
 
 /**
+ * @brief Formats a fallback device description string.
+ *
+ * This function is used when stream auto-detection cannot provide detailed
+ * video/audio properties. It still exposes stable metadata that allows users
+ * to identify and use the stream.
+ *
+ * @param videomaster_context VideoMasterContext pointer to the context
+ * @param board_name Name of the board
+ * @param serial_number Board serial number
+ * @return char* Formatted fallback description string
+ */
+static char *
+format_fallback_device_description(VideoMasterContext *videomaster_context,
+                                   const char         *board_name,
+                                   const char         *serial_number);
+
+/**
  * @brief  Formats the device name string.
  *
  * This function formats the device name string using the provided board name
@@ -191,6 +190,15 @@ static char *format_device_description(VideoMasterContext *videomaster_context,
 static char *format_device_name(VideoMasterContext *videomaster_context,
                                 const char         *board_name,
                                 const char         *serial_number);
+
+/**
+ * @brief Converts an AVVideoMasterChannelType to a readable string.
+ *
+ * @param channel_type Channel type value
+ * @return const char* Human-readable channel type
+ */
+static const char *
+channel_type_to_string(enum AVVideoMasterChannelType channel_type);
 /**
  * @brief Get the active loopback property for a given channel index
  *
@@ -356,8 +364,6 @@ static int get_rx_sdi_board_property_clock_divisor_from_index(uint32_t index);
  * @param index Channel Index
  * @return VHD_STREAMTYPE
  */
-static VHD_STREAMTYPE get_rx_stream_type_from_index(uint32_t index);
-
 /**
  * @brief Get the sample rate from audio infoframe and aes status object
  *
@@ -424,54 +430,6 @@ static int get_videomaster_enumeration_value_for_timestamp_source(
     enum AVVideoMasterTimeStampType type);
 
 /**
- * @brief      Handles AV error codes and logs messages accordingly.
- *
- * This function checks the AV error code and logs a success message if
- * the error code is 0. If the error code is any other error, it logs
- * the error message.
- *
- * @param avctx  AVFormatContext pointer to the AVFormatContext
- * @param av_error  AVERROR code
- * @param trace_message  Message to log for tracing
- * @param error_message  Message to log on error
- * @return int 0 on success, or negative AVERROR code on failure
- */
-static int handle_av_error(AVFormatContext *avctx, int av_error,
-                           const char *trace_message,
-                           const char *error_message);
-
-/**
- * @brief  Handles VHD status codes and logs messages accordingly.
- *
- *  This function checks the VHD status code and logs a success message if
- *  the status is VHDERR_NOERROR. If the status is VHDERR_TIMEOUT, it
- * returns AVERROR(EAGAIN). If the status is any other error, it logs the
- * error message and the last error message from the VHD library.
- *
- * @param avctx  AVFormatContext pointer to the AVFormatContext
- * @param vhd_status VHD_ERRORCODE status code
- * @param success_message Message to log on success
- * @param error_message Message to log on error
- * @return int 0 on success, or negative AVERROR code on failure
- */
-static int handle_vhd_status(AVFormatContext *avctx, VHD_ERRORCODE vhd_status,
-                             const char *success_message,
-                             const char *error_message);
-
-/**
- * @brief Initialize the audio info structure
- *
- * This function initializes the audio info structure
- * with default values and sets the codec ID to AV_CODEC_ID_NONE.
- * @param videomaster_context  VideoMasterContext pointer to the
- * VideoMasterContext
- * @param audio_info  Pointer to the variable to store the audio info
- * @return int 0 on success, negative AVERROR code on failure
- */
-static int init_audio_info(VideoMasterContext *videomaster_context,
-                           VHD_AUDIOINFO      *audio_info);
-
-/**
  * @brief Convert the interleaved audio info to an audio buffer
  * This function converts the interleaved audio info
  * to an audio buffer
@@ -529,63 +487,25 @@ static int add_device_info_into_list(VideoMasterContext *videomaster_context,
                                      char *board_name, char *serial_number,
                                      struct AVDeviceInfoList **device_list)
 {
-    char          error_msg[128];
-    int           av_error = 0;
-    const char   *device_name = NULL;
-    const char   *device_description = NULL;
-    AVDeviceInfo *new_device = NULL;
-    snprintf(error_msg, sizeof(error_msg),
-             "Failed to get stream properties for channel %u on board %u",
-             videomaster_context->channel_index,
-             videomaster_context->board_index);
+    int                             av_error = 0;
+    char                           *device_name = NULL;
+    char                           *device_description = NULL;
+    char                           *enriched_description = NULL;
+    AVDeviceInfo                   *new_device = NULL;
+    enum AVVideoMasterBufferPacking buffer_packing;
 
-    GET_AND_CHECK(
-        handle_av_error, videomaster_context->avctx, videomaster_context->avctx,
-        ff_videomaster_get_video_stream_properties(
+    videomaster_context->channel_type =
+        ff_videomaster_get_channel_type_from_index(
             videomaster_context->avctx, videomaster_context->board_handle,
-            videomaster_context->stream_handle,
-            videomaster_context->channel_index,
-            &videomaster_context->channel_type,
-            &videomaster_context->video_info, &videomaster_context->video_width,
-            &videomaster_context->video_height,
-            &videomaster_context->video_frame_rate_num,
-            &videomaster_context->video_frame_rate_den,
-            &videomaster_context->video_interlaced,
-            videomaster_context->dual_stream),
-        "", error_msg);
-
-    snprintf(error_msg, sizeof(error_msg),
-             "Failed to get audio stream properties for channel %u on board "
-             "%u",
-             videomaster_context->channel_index,
-             videomaster_context->board_index);
-
-    enum AVVideoMasterBufferPacking buffer_packing =
-        ((videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_HDMI)
-             ? get_buffer_packing_based_on_cable_bit_sampling(
-                   videomaster_context->video_info.hdmi.cable_bit_sampling)
-             : AV_VIDEOMASTER_BUFFER_PACKING_YUV422_10);
-
-    GET_AND_CHECK(handle_av_error, videomaster_context->avctx,
-                  videomaster_context->avctx,
-                  ff_videomaster_get_audio_stream_properties(
-                      videomaster_context->avctx,
-                      videomaster_context->board_handle,
-                      videomaster_context->stream_handle,
-                      videomaster_context->channel_index, buffer_packing,
-                      &videomaster_context->channel_type,
-                      &videomaster_context->audio_info,
-                      &videomaster_context->audio_sample_rate,
-                      &videomaster_context->audio_nb_channels,
-                      &videomaster_context->audio_sample_size,
-                      &videomaster_context->audio_codec),
-                  "", error_msg);
+            videomaster_context->channel_index);
 
     device_name = format_device_name(videomaster_context, board_name,
                                      serial_number);
 
-    device_description = format_device_description(videomaster_context,
-                                                   board_name, serial_number);
+    device_description = format_fallback_device_description(videomaster_context,
+                                                            board_name,
+                                                            serial_number);
+
     if (!device_name || !device_description)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
@@ -593,11 +513,67 @@ static int add_device_info_into_list(VideoMasterContext *videomaster_context,
                "channel %u on board %u\n",
                videomaster_context->channel_index,
                videomaster_context->board_index);
+        av_freep(&device_name);
+        av_freep(&device_description);
         return AVERROR(ENOMEM);
     }
 
-    new_device = create_device_info(videomaster_context, (char *)device_name,
-                                    (char *)device_description, true);
+    av_error = ff_videomaster_get_video_stream_properties(
+        videomaster_context->avctx, videomaster_context->board_handle,
+        videomaster_context->stream_handle, videomaster_context->channel_index,
+        &videomaster_context->channel_type, &videomaster_context->video_info,
+        &videomaster_context->video_width, &videomaster_context->video_height,
+        &videomaster_context->video_frame_rate_num,
+        &videomaster_context->video_frame_rate_den,
+        &videomaster_context->video_interlaced,
+        videomaster_context->dual_stream);
+
+    if (av_error == 0)
+    {
+        buffer_packing =
+            ((videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_HDMI)
+                 ? get_buffer_packing_based_on_cable_bit_sampling(
+                       videomaster_context->video_info.hdmi.cable_bit_sampling)
+                 : AV_VIDEOMASTER_BUFFER_PACKING_YUV422_10);
+
+        if (ff_videomaster_get_audio_stream_properties(
+                videomaster_context->avctx, videomaster_context->board_handle,
+                videomaster_context->stream_handle,
+                videomaster_context->channel_index, buffer_packing,
+                &videomaster_context->channel_type,
+                &videomaster_context->audio_info,
+                &videomaster_context->audio_sample_rate,
+                &videomaster_context->audio_nb_channels,
+                &videomaster_context->audio_sample_size,
+                &videomaster_context->audio_codec) != 0)
+        {
+            av_log(videomaster_context->avctx, AV_LOG_DEBUG,
+                   "Detailed audio properties are unavailable for channel %u "
+                   "on board %u\n",
+                   videomaster_context->channel_index,
+                   videomaster_context->board_index);
+        }
+
+        enriched_description = format_device_description(videomaster_context,
+                                                         board_name,
+                                                         serial_number);
+        if (enriched_description)
+        {
+            av_freep(&device_description);
+            device_description = enriched_description;
+        }
+    }
+    else
+    {
+        av_log(videomaster_context->avctx, AV_LOG_DEBUG,
+               "Detailed properties unavailable for channel %u on board %u. "
+               "Keeping fallback description.\n",
+               videomaster_context->channel_index,
+               videomaster_context->board_index);
+    }
+
+    new_device = create_device_info(videomaster_context, device_name,
+                                    device_description, true);
 
     if (!new_device)
     {
@@ -634,7 +610,7 @@ static int add_device_info_into_list(VideoMasterContext *videomaster_context,
            videomaster_context->channel_index,
            videomaster_context->board_index);
 
-    return av_error;
+    return 0;
 }
 
 static AVDeviceInfo *create_device_info(VideoMasterContext *videomaster_context,
@@ -673,23 +649,24 @@ static int disable_loopback_on_channel(VideoMasterContext *videomaster_context)
     uint32_t has_passive_loopback = false;
     uint32_t has_active_loopback = false;
 
-    handle_vhd_status(
+    ff_videomaster_handle_vhd_status(
         videomaster_context->avctx,
         VHD_GetBoardCapability(videomaster_context->board_handle,
                                VHD_CORE_BOARD_CAP_PASSIVE_LOOPBACK,
                                &has_passive_loopback),
         "", "");
-    handle_vhd_status(videomaster_context->avctx,
-                      VHD_GetBoardCapability(videomaster_context->board_handle,
-                                             VHD_CORE_BOARD_CAP_ACTIVE_LOOPBACK,
-                                             &has_active_loopback),
-                      "", "");
+    ff_videomaster_handle_vhd_status(
+        videomaster_context->avctx,
+        VHD_GetBoardCapability(videomaster_context->board_handle,
+                               VHD_CORE_BOARD_CAP_ACTIVE_LOOPBACK,
+                               &has_active_loopback),
+        "", "");
 
     if (has_active_loopback &&
         get_active_loopback_property(videomaster_context->channel_index) !=
             NB_VHD_CORE_BOARDPROPERTIES)
     {
-        handle_vhd_status(
+        ff_videomaster_handle_vhd_status(
             videomaster_context->avctx,
             VHD_SetBoardProperty(videomaster_context->board_handle,
                                  get_active_loopback_property(
@@ -702,7 +679,7 @@ static int disable_loopback_on_channel(VideoMasterContext *videomaster_context)
         get_passive_loopback_property(videomaster_context->channel_index) !=
             NB_VHD_CORE_BOARDPROPERTIES)
     {
-        handle_vhd_status(
+        ff_videomaster_handle_vhd_status(
             videomaster_context->avctx,
             VHD_SetBoardProperty(videomaster_context->board_handle,
                                  get_passive_loopback_property(
@@ -714,12 +691,152 @@ static int disable_loopback_on_channel(VideoMasterContext *videomaster_context)
     return 0;
 }
 
+/* Helper functions for ff_videomaster_start_stream */
+
+static int setup_field_merge(VideoMasterContext *videomaster_context)
+{
+    int has_field_merge_capability = 0;
+
+    if (!videomaster_context->video_interlaced)
+        return 0;
+
+    ff_videomaster_handle_vhd_status(
+        videomaster_context->avctx,
+        VHD_GetBoardCapability(videomaster_context->board_handle,
+                               VHD_CORE_BOARD_CAP_FIELD_MERGING,
+                               &has_field_merge_capability),
+        "", "");
+    if (has_field_merge_capability)
+        ff_videomaster_handle_vhd_status(
+            videomaster_context->avctx,
+            VHD_SetStreamProperty(videomaster_context->stream_handle,
+                                  VHD_CORE_SP_FIELD_MERGE, true),
+            "", "Unable to set field merge property for interlaced stream");
+    else
+        av_log(videomaster_context->avctx, AV_LOG_WARNING,
+               "Field merge not supported on this board, interlaced "
+               "content might be affected\n");
+    return 0;
+}
+
+static int setup_transfer_scheme(VideoMasterContext *videomaster_context)
+{
+    ff_videomaster_handle_vhd_status(
+        videomaster_context->avctx,
+        VHD_SetStreamProperty(videomaster_context->stream_handle,
+                              VHD_CORE_SP_TRANSFER_SCHEME, VHD_TRANSFER_SLAVED),
+        "", "");
+    return 0;
+}
+
+static int setup_buffer_packing(VideoMasterContext *videomaster_context)
+{
+    int                                 av_error = 0;
+    const VideoMasterBufferPackingInfo *info = NULL;
+    bool                                has_line_padding = false;
+
+    if (videomaster_context->video_buffer_packing ==
+        AV_NB_VIDEOMASTER_BUFFER_PACKINGS)
+    {
+        has_line_padding =
+            (VHD_SetStreamProperty(videomaster_context->stream_handle,
+                                   VHD_CORE_SP_LINE_PADDING,
+                                   128) == VHDERR_INVALIDPROPERTY);
+        info = get_buffer_packing_info(
+            has_line_padding ? AV_VIDEOMASTER_BUFFER_PACKING_YUV422_10
+                             : AV_VIDEOMASTER_BUFFER_PACKING_YUV422_8);
+    }
+    else
+    {
+        info = get_buffer_packing_info(
+            videomaster_context->video_buffer_packing);
+    }
+
+    if (!info)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Not implemented video buffer packing: %s\n",
+               VHD_BUFFERPACKING_ToPrettyString(
+                   videomaster_context->video_buffer_packing));
+        return AVERROR(EINVAL);
+    }
+
+    ff_videomaster_handle_vhd_status(
+        videomaster_context->avctx,
+        VHD_SetStreamProperty(videomaster_context->stream_handle,
+                              VHD_CORE_SP_BUFFER_PACKING, info->buffer_packing),
+        "", "");
+
+    if (info->codec_or_pixel_format)
+        videomaster_context->video_codec = info->format.codec_id;
+    else
+    {
+        videomaster_context->video_codec = AV_CODEC_ID_RAWVIDEO;
+        videomaster_context->video_pixel_format = info->format.pixel_format;
+    }
+
+    videomaster_context->video_bit_rate = av_rescale(
+        videomaster_context->video_width * videomaster_context->video_height *
+            info->bits_per_pixel,
+        videomaster_context->video_frame_rate_num * info->bit_rate_num_mul,
+        videomaster_context->video_frame_rate_den * info->bit_rate_den_mul);
+
+    if (info->line_padding_needed &&
+        VHD_SetStreamProperty(videomaster_context->stream_handle,
+                              VHD_CORE_SP_LINE_PADDING,
+                              128) == VHDERR_INVALIDPROPERTY)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Board does not support line padding property. Unable "
+               "to select %s video buffer packing explicitly. Leave the "
+               "option unset or select another buffer packing.\n",
+               VHD_BUFFERPACKING_ToPrettyString(info->buffer_packing));
+        return AVERROR(EINVAL);
+    }
+
+    av_log(videomaster_context->avctx, AV_LOG_INFO,
+           "Video buffer packing selected: %s\n",
+           VHD_BUFFERPACKING_ToPrettyString(info->buffer_packing));
+
+    return 0;
+}
+
+static int setup_timestamp_source(VideoMasterContext *videomaster_context)
+{
+    int av_error = 0;
+
+    if (videomaster_context->timestamp_source <
+        AV_VIDEOMASTER_TIMESTAMP_HARDWARE)
+        GET_AND_CHECK(
+            ff_videomaster_handle_vhd_status, videomaster_context->avctx,
+            videomaster_context->avctx,
+            VHD_SetBoardProperty(
+                videomaster_context->board_handle,
+                VHD_CORE_BP_SYSTEM_TIME_CLK_TYPE,
+                get_videomaster_enumeration_value_for_timestamp_source(
+                    videomaster_context->timestamp_source)),
+            "System time clock type set successfully",
+            "Failed to set system time clock type");
+    else if (videomaster_context->timestamp_source ==
+             AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD)
+    {
+        ff_videomaster_handle_vhd_status(
+            videomaster_context->avctx,
+            VHD_SetBoardProperty(videomaster_context->board_handle,
+                                 VHD_SDI_BP_BLACKBURST0_DETECTION_ENABLE,
+                                 FALSE),
+            "Disabled Blackburst detection for LTC on-board signal",
+            "Failed to disable Blackburst detection for LTC on-board signal");
+    }
+
+    return 0;
+}
+
 static char *format_device_description(VideoMasterContext *videomaster_context,
                                        const char         *board_name,
                                        const char         *serial_number)
 {
-    char  *device_description = av_mallocz(256);
-    double frame_rate = 0.0;
+    char *device_description = av_mallocz(256);
     if (!device_description)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
@@ -727,39 +844,47 @@ static char *format_device_description(VideoMasterContext *videomaster_context,
         return NULL;
     }
 
-    frame_rate = (double)videomaster_context->video_frame_rate_num /
-                 videomaster_context->video_frame_rate_den;
     if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_HDMI)
-    {
-        snprintf(
-            device_description, 256,
-            "HDMI video: %ux%u%s%.3f %s %s, audio: %u channels @%uHz (%u bits) "
-            "on "
-            "board %s (SN: %s)",
-            videomaster_context->video_width, videomaster_context->video_height,
-            videomaster_context->video_interlaced ? "i" : "p", frame_rate,
-            VHD_DV_CS_ToPrettyString(
-                videomaster_context->video_info.hdmi.color_space),
-            VHD_DV_SAMPLING_ToPrettyString(
-                videomaster_context->video_info.hdmi.cable_bit_sampling),
-            videomaster_context->audio_nb_channels,
-            videomaster_context->audio_sample_rate,
-            videomaster_context->audio_sample_size, board_name, serial_number);
-    }
+        ff_videomaster_format_channel_description_hdmi(videomaster_context,
+                                                       board_name,
+                                                       serial_number,
+                                                       device_description, 256);
     else
-    {
-        const char *interface_str = VHD_INTERFACE_ToPrettyString(
-            videomaster_context->video_info.sdi.interface);
+        ff_videomaster_format_channel_description_sdi(videomaster_context,
+                                                      board_name, serial_number,
+                                                      device_description, 256);
 
-        snprintf(device_description, 256,
-                 "SDI video: %ux%u%s%.3f (interface: %s) on board %s (SN: %s)",
-                 videomaster_context->video_width,
-                 videomaster_context->video_height,
-                 videomaster_context->video_interlaced ? "i" : "p",
-                 videomaster_context->video_interlaced ? frame_rate * 2
-                                                       : frame_rate,
-                 interface_str, board_name, serial_number);
+    return device_description;
+}
+
+static char *
+format_fallback_device_description(VideoMasterContext *videomaster_context,
+                                   const char         *board_name,
+                                   const char         *serial_number)
+{
+    char       *device_description = av_mallocz(256);
+    const char *channel_type = channel_type_to_string(
+        videomaster_context->channel_type);
+    const char *status;
+
+    if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_IP_2110)
+        status = ff_videomaster_get_channel_status_ip(videomaster_context);
+    else
+        status = "locked";
+
+    if (!device_description)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Failed to allocate memory for fallback device description\n");
+        return NULL;
     }
+
+    snprintf(device_description, 256,
+             "%s channel %u (%s) on board %u (%s, SN: %s)", channel_type,
+             videomaster_context->channel_index, status,
+             videomaster_context->board_index,
+             board_name ? board_name : "unknown board",
+             serial_number ? serial_number : "unknown");
 
     return device_description;
 }
@@ -779,6 +904,24 @@ static char *format_device_name(VideoMasterContext *videomaster_context,
              videomaster_context->channel_index,
              videomaster_context->board_index);
     return device_name;
+}
+
+static const char *
+channel_type_to_string(enum AVVideoMasterChannelType channel_type)
+{
+    switch (channel_type)
+    {
+    case AV_VIDEOMASTER_CHANNEL_HDMI:
+        return "HDMI";
+    case AV_VIDEOMASTER_CHANNEL_SDI:
+        return "SDI";
+    case AV_VIDEOMASTER_CHANNEL_ASISDI:
+        return "ASI/SDI";
+    case AV_VIDEOMASTER_CHANNEL_IP_2110:
+        return "IP 2110";
+    default:
+        return "Unknown";
+    }
 }
 
 static VHD_CORE_BOARDPROPERTY get_active_loopback_property(int channel_index)
@@ -803,12 +946,13 @@ static int get_audio_buffer(VideoMasterContext *videomaster_context)
     if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_HDMI)
     {
 
-        if (handle_vhd_status(videomaster_context->avctx,
-                              VHD_GetSlotDvAudioInfo(
-                                  videomaster_context->slot_handle, &audio_type,
-                                  &audio_infoframe, &audio_aes_status),
-                              "Audio slot buffer retrieved successfully",
-                              "Failed to retrieve audio slot buffer") != 0)
+        if (ff_videomaster_handle_vhd_status(
+                videomaster_context->avctx,
+                VHD_GetSlotDvAudioInfo(videomaster_context->slot_handle,
+                                       &audio_type, &audio_infoframe,
+                                       &audio_aes_status),
+                "Audio slot buffer retrieved successfully",
+                "Failed to retrieve audio slot buffer") != 0)
             return AVERROR(EIO);
 
         if (audio_type != VHD_DV_AUDIO_TYPE_NONE)
@@ -817,7 +961,7 @@ static int get_audio_buffer(VideoMasterContext *videomaster_context)
             if (audio_aes_status.LinearPCM ==
                 VHD_DV_AUDIO_AES_SAMPLE_STS_LINEAR_PCM_SAMPLE)
             {
-                handle_vhd_status(
+                ff_videomaster_handle_vhd_status(
                     videomaster_context->avctx,
                     VHD_SlotExtractDvPCMAudio(
                         videomaster_context->slot_handle,
@@ -827,7 +971,7 @@ static int get_audio_buffer(VideoMasterContext *videomaster_context)
                     "", "");
                 videomaster_context->audio_buffer = av_mallocz(
                     videomaster_context->audio_buffer_size);
-                if (handle_vhd_status(
+                if (ff_videomaster_handle_vhd_status(
                         videomaster_context->avctx,
                         VHD_SlotExtractDvPCMAudio(
                             videomaster_context->slot_handle,
@@ -861,11 +1005,11 @@ static int get_audio_buffer(VideoMasterContext *videomaster_context)
     else
     {
         audio_info = &videomaster_context->audio_info.sdi.audio_info;
-        handle_vhd_status(videomaster_context->avctx,
-                          VHD_SlotExtractAudio(videomaster_context->slot_handle,
-                                               audio_info),
-                          "Audio slot buffer retrieved successfully",
-                          "Failed to retrieve audio slot buffer");
+        ff_videomaster_handle_vhd_status(
+            videomaster_context->avctx,
+            VHD_SlotExtractAudio(videomaster_context->slot_handle, audio_info),
+            "Audio slot buffer retrieved successfully",
+            "Failed to retrieve audio slot buffer");
         interleaved_audio_info_to_audio_buffer(
             videomaster_context, audio_info, &videomaster_context->audio_buffer,
             &videomaster_context->audio_buffer_size);
@@ -895,21 +1039,23 @@ static int get_audio_stream_properties_from_audio_infoframe(
 
     VideoMasterContext *videomaster_context = &videomaster_context_struct;
 
-    GET_AND_CHECK(
-        handle_av_error, videomaster_context->avctx, videomaster_context->avctx,
-        ff_videomaster_get_video_stream_properties(
-            videomaster_context->avctx, videomaster_context->board_handle,
-            videomaster_context->stream_handle,
-            videomaster_context->channel_index,
-            &videomaster_context->channel_type,
-            &videomaster_context->video_info, &videomaster_context->video_width,
-            &videomaster_context->video_height,
-            &videomaster_context->video_frame_rate_num,
-            &videomaster_context->video_frame_rate_den,
-            &videomaster_context->video_interlaced,
-            videomaster_context->dual_stream),
-        "Video stream properties retrieved successfully",
-        "Could not retrieve video stream properties");
+    GET_AND_CHECK(ff_videomaster_handle_av_error, videomaster_context->avctx,
+                  videomaster_context->avctx,
+                  ff_videomaster_get_video_stream_properties(
+                      videomaster_context->avctx,
+                      videomaster_context->board_handle,
+                      videomaster_context->stream_handle,
+                      videomaster_context->channel_index,
+                      &videomaster_context->channel_type,
+                      &videomaster_context->video_info,
+                      &videomaster_context->video_width,
+                      &videomaster_context->video_height,
+                      &videomaster_context->video_frame_rate_num,
+                      &videomaster_context->video_frame_rate_den,
+                      &videomaster_context->video_interlaced,
+                      videomaster_context->dual_stream),
+                  "Video stream properties retrieved successfully",
+                  "Could not retrieve video stream properties");
 
     *audio_info = (union VideoMasterAudioInfo){ 0 };
     *codec = AV_CODEC_ID_NONE;
@@ -919,7 +1065,7 @@ static int get_audio_stream_properties_from_audio_infoframe(
     GET_AND_CHECK_AND_STOP_STREAM(lock_slot, avctx, videomaster_context);
 
     GET_AND_CHECK_AND_STOP_STREAM(
-        handle_vhd_status, avctx, avctx,
+        ff_videomaster_handle_vhd_status, avctx, avctx,
         VHD_GetSlotDvAudioInfo(videomaster_context->slot_handle, &audio_type,
                                &audio_info_frame, &audio_aes_status),
         "Audio info frame retrieved successfully",
@@ -933,7 +1079,7 @@ static int get_audio_stream_properties_from_audio_infoframe(
     }
 
     GET_AND_CHECK_AND_STOP_STREAM(
-        handle_av_error, avctx, avctx,
+        ff_videomaster_handle_av_error, avctx, avctx,
         get_sample_size_from_audio_infoframe_and_aes_status(videomaster_context,
                                                             audio_info_frame,
                                                             audio_aes_status,
@@ -941,21 +1087,21 @@ static int get_audio_stream_properties_from_audio_infoframe(
         "", "Failed to get audio bits per sample from audio info frame");
 
     GET_AND_CHECK_AND_STOP_STREAM(
-        handle_av_error, avctx, avctx,
+        ff_videomaster_handle_av_error, avctx, avctx,
         get_sample_rate_from_audio_infoframe_and_aes_status(videomaster_context,
                                                             audio_info_frame,
                                                             audio_aes_status,
                                                             sample_rate),
         "", "Failed to get audio sample rate from audio info frame");
     GET_AND_CHECK_AND_STOP_STREAM(
-        handle_av_error, avctx, avctx,
+        ff_videomaster_handle_av_error, avctx, avctx,
         get_nb_channels_from_audio_infoframe_and_aes_status(videomaster_context,
                                                             audio_info_frame,
                                                             audio_aes_status,
                                                             nb_channels),
         "", "Failed to get audio channels from audio info frame");
 
-    GET_AND_CHECK_AND_STOP_STREAM(handle_av_error, avctx, avctx,
+    GET_AND_CHECK_AND_STOP_STREAM(ff_videomaster_handle_av_error, avctx, avctx,
                                   get_codec_from_audio_infoframe_and_aes_status(
                                       videomaster_context, audio_info_frame,
                                       audio_aes_status, codec),
@@ -1221,7 +1367,8 @@ static int get_rx_sdi_board_property_clock_divisor_from_index(uint32_t index)
     }
 }
 
-static VHD_STREAMTYPE get_rx_stream_type_from_index(uint32_t index)
+VHD_STREAMTYPE
+ff_videomaster_get_rx_stream_type_from_index(uint32_t index)
 {
     switch (index)
     {
@@ -1406,11 +1553,12 @@ static int get_serial_number(VideoMasterContext *videomaster_context,
     }
 
     for (int i = 0; i < sizeof(properties) / sizeof(properties[0]); i++)
-        if (handle_vhd_status(videomaster_context->avctx,
-                              VHD_GetBoardProperty(board_handle, properties[i],
-                                                   &serial_number_array[i]),
-                              "Serial number part retrieved successfully",
-                              "Failed to retrieve serial number part") != 0)
+        if (ff_videomaster_handle_vhd_status(
+                videomaster_context->avctx,
+                VHD_GetBoardProperty(board_handle, properties[i],
+                                     &serial_number_array[i]),
+                "Serial number part retrieved successfully",
+                "Failed to retrieve serial number part") != 0)
         {
             av_log(videomaster_context->avctx, AV_LOG_WARNING,
                    "Failed to retrieve serial number part %d\n", i);
@@ -1438,11 +1586,16 @@ static int get_video_buffer(VideoMasterContext *videomaster_context)
     {
         video_buffer_type = VHD_DV_BT_VIDEO;
     }
+    else if (videomaster_context->channel_type ==
+             AV_VIDEOMASTER_CHANNEL_IP_2110)
+    {
+        video_buffer_type = VHD_ST2110_BT_VIDEO;
+    }
     else
     {
         video_buffer_type = VHD_SDI_BT_VIDEO;
     }
-    return handle_vhd_status(
+    return ff_videomaster_handle_vhd_status(
         videomaster_context->avctx,
         VHD_GetSlotBuffer(videomaster_context->slot_handle, video_buffer_type,
                           &videomaster_context->video_buffer,
@@ -1469,8 +1622,9 @@ static int get_videomaster_enumeration_value_for_timestamp_source(
     }
 }
 
-static int handle_av_error(AVFormatContext *avctx, int av_error,
-                           const char *trace_message, const char *error_message)
+int ff_videomaster_handle_av_error(AVFormatContext *avctx, int av_error,
+                                   const char *trace_message,
+                                   const char *error_message)
 {
     if (av_error == 0 && strcmp(trace_message, "") != 0)
     {
@@ -1483,9 +1637,10 @@ static int handle_av_error(AVFormatContext *avctx, int av_error,
     return av_error;
 }
 
-static int handle_vhd_status(AVFormatContext *avctx, VHD_ERRORCODE vhd_status,
-                             const char *success_message,
-                             const char *error_message)
+int ff_videomaster_handle_vhd_status(AVFormatContext *avctx,
+                                     VHD_ERRORCODE    vhd_status,
+                                     const char      *success_message,
+                                     const char      *error_message)
 {
     if (vhd_status == VHDERR_NOERROR && strcmp(success_message, "") != 0)
     {
@@ -1508,8 +1663,8 @@ static int handle_vhd_status(AVFormatContext *avctx, VHD_ERRORCODE vhd_status,
     return 0;
 }
 
-static int init_audio_info(VideoMasterContext *videomaster_context,
-                           VHD_AUDIOINFO      *audio_info)
+int ff_videomaster_sdi_init_audio_info(VideoMasterContext *videomaster_context,
+                                       VHD_AUDIOINFO      *audio_info)
 {
     VHD_AUDIOGROUP   *audio_group = NULL;
     VHD_AUDIOCHANNEL *audio_channel = NULL;
@@ -1677,7 +1832,7 @@ static int interleaved_audio_info_to_audio_buffer(
 
 static int lock_slot(VideoMasterContext *videomaster_context)
 {
-    return handle_vhd_status(
+    return ff_videomaster_handle_vhd_status(
         videomaster_context->avctx,
         VHD_LockSlotHandle(videomaster_context->stream_handle,
                            &videomaster_context->slot_handle),
@@ -1689,11 +1844,11 @@ static int unlock_slot(VideoMasterContext *videomaster_context)
     int return_code = 0;
     if (videomaster_context->slot_handle)
     {
-        return_code = handle_vhd_status(videomaster_context->avctx,
-                                        VHD_UnlockSlotHandle(
-                                            videomaster_context->slot_handle),
-                                        "Slot handle unlocked successfully",
-                                        "Failed to unlock slot handle");
+        return_code = ff_videomaster_handle_vhd_status(
+            videomaster_context->avctx,
+            VHD_UnlockSlotHandle(videomaster_context->slot_handle),
+            "Slot handle unlocked successfully",
+            "Failed to unlock slot handle");
         videomaster_context->slot_handle = NULL;
     }
     return return_code;
@@ -1736,22 +1891,20 @@ static int release_audio_info(VideoMasterContext *videomaster_context,
 
 int ff_videomaster_close_board_handle(VideoMasterContext *videomaster_context)
 {
-    int return_code = handle_vhd_status(videomaster_context->avctx,
-                                        VHD_CloseBoardHandle(
-                                            videomaster_context->board_handle),
-                                        "Board handle closed successfully",
-                                        "Failed to close board handle");
+    int return_code = ff_videomaster_handle_vhd_status(
+        videomaster_context->avctx,
+        VHD_CloseBoardHandle(videomaster_context->board_handle),
+        "Board handle closed successfully", "Failed to close board handle");
     videomaster_context->board_handle = NULL;
     return return_code;
 }
 
 int ff_videomaster_close_stream_handle(VideoMasterContext *videomaster_context)
 {
-    int return_code = handle_vhd_status(videomaster_context->avctx,
-                                        VHD_CloseStreamHandle(
-                                            videomaster_context->stream_handle),
-                                        "Stream handle closed successfully",
-                                        "Failed to close stream handle");
+    int return_code = ff_videomaster_handle_vhd_status(
+        videomaster_context->avctx,
+        VHD_CloseStreamHandle(videomaster_context->stream_handle),
+        "Stream handle closed successfully", "Failed to close stream handle");
     videomaster_context->stream_handle = NULL;
     return return_code;
 }
@@ -1772,7 +1925,7 @@ int ff_videomaster_create_devices_infos_from_board_index(
     GET_AND_CHECK(ff_videomaster_open_board_handle, videomaster_context->avctx,
                   videomaster_context);
 
-    av_error = handle_av_error(
+    av_error = ff_videomaster_handle_av_error(
         videomaster_context->avctx,
         get_board_name_and_serial_number(videomaster_context, &board_name,
                                          &serial_number),
@@ -1830,7 +1983,7 @@ int ff_videomaster_create_devices_infos_from_board_index(
            "ff_videomaster_create_devices_"
            "infos_from_board_index: OUT\n");
 
-    return 0;
+    return av_error;
 }
 
 int ff_videomaster_extract_context(AVFormatContext     *avctx,
@@ -1878,7 +2031,7 @@ int ff_videomaster_get_api_info(VideoMasterContext *videomaster_context)
     int av_error = AVERROR(EIO);
     av_log(videomaster_context->avctx, AV_LOG_TRACE,
            "ff_videomaster_get_api_info: IN\n");
-    if (handle_vhd_status(
+    if (ff_videomaster_handle_vhd_status(
             videomaster_context->avctx,
             VHD_GetApiInfo(&videomaster_context->api_version,
                            &videomaster_context->number_of_boards),
@@ -1920,18 +2073,18 @@ int ff_videomaster_get_audio_stream_properties(
     if (*channel_type == AV_VIDEOMASTER_CHANNEL_HDMI)
     {
         if (local_stream_handle == NULL)
-            handle_vhd_status(avctx,
-                              VHD_OpenStreamHandle(
-                                  board_handle,
-                                  get_rx_stream_type_from_index(channel_index),
-                                  VHD_DV_STPROC_JOINED, NULL,
-                                  &local_stream_handle, NULL),
-                              "Stream handle opened "
-                              "successfully",
-                              "Failed to open stream "
-                              "handle");
+            ff_videomaster_handle_vhd_status(
+                avctx,
+                VHD_OpenStreamHandle(
+                    board_handle,
+                    ff_videomaster_get_rx_stream_type_from_index(channel_index),
+                    VHD_DV_STPROC_JOINED, NULL, &local_stream_handle, NULL),
+                "Stream handle opened "
+                "successfully",
+                "Failed to open stream "
+                "handle");
 
-        GET_AND_CHECK(handle_av_error, avctx, avctx,
+        GET_AND_CHECK(ff_videomaster_handle_av_error, avctx, avctx,
                       get_audio_stream_properties_from_audio_infoframe(
                           avctx, board_handle, local_stream_handle,
                           channel_index, buffer_packing, audio_info,
@@ -1941,11 +2094,13 @@ int ff_videomaster_get_audio_stream_properties(
                       "properties");
 
         if (stream_handle == NULL)
-            handle_vhd_status(avctx, VHD_CloseStreamHandle(local_stream_handle),
-                              "Stream handle closed "
-                              "successfully",
-                              "Failed to close stream "
-                              "handle");
+            ff_videomaster_handle_vhd_status(avctx,
+                                             VHD_CloseStreamHandle(
+                                                 local_stream_handle),
+                                             "Stream handle closed "
+                                             "successfully",
+                                             "Failed to close stream "
+                                             "handle");
     }
     else
     {
@@ -1966,11 +2121,11 @@ enum AVVideoMasterChannelType ff_videomaster_get_channel_type_from_index(
 {
     VHD_CHANNELTYPE channel_type = NB_VHD_CHANNELTYPE;
 
-    handle_vhd_status(avctx,
-                      VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL,
-                                             channel_index, VHD_CORE_CP_TYPE,
-                                             (uint32_t *)&channel_type),
-                      "", "");
+    ff_videomaster_handle_vhd_status(
+        avctx,
+        VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL, channel_index,
+                               VHD_CORE_CP_TYPE, (uint32_t *)&channel_type),
+        "", "");
 
     switch (channel_type)
     {
@@ -1987,6 +2142,8 @@ enum AVVideoMasterChannelType ff_videomaster_get_channel_type_from_index(
     case VHD_CHNTYPE_3GSDI_ASI:
     case VHD_CHNTYPE_12GSDI_ASI:
         return AV_VIDEOMASTER_CHANNEL_ASISDI;
+    case VHD_CHNTYPE_IP_2110:
+        return AV_VIDEOMASTER_CHANNEL_IP_2110;
     default:
         break;
     }
@@ -2027,7 +2184,7 @@ int ff_videomaster_get_data(VideoMasterContext *videomaster_context)
 
 int ff_videomaster_get_nb_rx_channels(VideoMasterContext *videomaster_context)
 {
-    return handle_vhd_status(
+    return ff_videomaster_handle_vhd_status(
         videomaster_context->avctx,
         VHD_GetBoardProperty(videomaster_context->board_handle,
                              VHD_CORE_BP_NB_RXCHANNELS,
@@ -2051,7 +2208,7 @@ int ff_videomaster_get_slots_counter(VideoMasterContext *videomaster_context)
 
 int ff_videomaster_get_nb_tx_channels(VideoMasterContext *videomaster_context)
 {
-    return handle_vhd_status(
+    return ff_videomaster_handle_vhd_status(
         videomaster_context->avctx,
         VHD_GetBoardProperty(videomaster_context->board_handle,
                              VHD_CORE_BP_NB_TXCHANNELS,
@@ -2082,7 +2239,7 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
         AV_VIDEOMASTER_TIMESTAMP_HARDWARE)
     {
         GET_AND_CHECK(
-            handle_vhd_status, videomaster_context->avctx,
+            ff_videomaster_handle_vhd_status, videomaster_context->avctx,
             videomaster_context->avctx,
             VHD_GetSlotHardwareTimestamp(videomaster_context->slot_handle,
                                          timestamp, &clock_frequency),
@@ -2100,7 +2257,7 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
                  AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD)
     {
         GET_AND_CHECK(
-            handle_vhd_status, videomaster_context->avctx,
+            ff_videomaster_handle_vhd_status, videomaster_context->avctx,
             videomaster_context->avctx,
             VHD_GetSlotTimecode(
                 videomaster_context->slot_handle,
@@ -2127,8 +2284,8 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
     else
     {
 
-        GET_AND_CHECK(handle_vhd_status, videomaster_context->avctx,
-                      videomaster_context->avctx,
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status,
+                      videomaster_context->avctx, videomaster_context->avctx,
                       VHD_GetSlotSystemTime(videomaster_context->slot_handle,
                                             timestamp),
                       "Timestamp retrieved "
@@ -2167,9 +2324,25 @@ int ff_videomaster_get_video_stream_properties(
            "ff_videomaster_get_video_stream_"
            "properties: IN\n");
 
+    if (*channel_type == AV_VIDEOMASTER_CHANNEL_IP_2110)
+    {
+        /*
+         * IP ST2110 channels do not support passive video-standard
+         * auto-detection. Properties (resolution, frame-rate, …) require
+         * explicit user parameters (ip_video_* options) and a running
+         * stream.  Return ENOSYS so callers can display a fallback
+         * description without printing a misleading SDI error.
+         */
+        av_log(avctx, AV_LOG_DEBUG,
+               "IP 2110 channel %u: video properties require explicit mode "
+               "(ip_video_* options). Auto-detection is not available.\n",
+               channel_index);
+        return AVERROR(ENOSYS);
+    }
+
     if (*channel_type == AV_VIDEOMASTER_CHANNEL_HDMI)
     {
-        if ((av_status = handle_vhd_status(
+        if ((av_status = ff_videomaster_handle_vhd_status(
                  avctx,
                  VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL,
                                         channel_index, VHD_DV_CP_ACTIVE_WIDTH,
@@ -2183,7 +2356,7 @@ int ff_videomaster_get_video_stream_properties(
             return av_status;
         }
 
-        if ((av_status = handle_vhd_status(
+        if ((av_status = ff_videomaster_handle_vhd_status(
                  avctx,
                  VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL,
                                         channel_index, VHD_DV_CP_ACTIVE_HEIGHT,
@@ -2196,7 +2369,7 @@ int ff_videomaster_get_video_stream_properties(
                    channel_index);
             return av_status;
         }
-        if ((av_status = handle_vhd_status(
+        if ((av_status = ff_videomaster_handle_vhd_status(
                  avctx,
                  VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL,
                                         channel_index, VHD_DV_CP_REFRESH_RATE,
@@ -2209,7 +2382,7 @@ int ff_videomaster_get_video_stream_properties(
                    channel_index);
             return av_status;
         }
-        if ((av_status = handle_vhd_status(
+        if ((av_status = ff_videomaster_handle_vhd_status(
                  avctx,
                  VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL,
                                         channel_index, VHD_DV_CP_PIXEL_CLOCK,
@@ -2222,7 +2395,7 @@ int ff_videomaster_get_video_stream_properties(
                    channel_index);
             return av_status;
         }
-        if ((av_status = handle_vhd_status(
+        if ((av_status = ff_videomaster_handle_vhd_status(
                  avctx,
                  VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL,
                                         channel_index, VHD_DV_CP_INTERLACED,
@@ -2238,7 +2411,7 @@ int ff_videomaster_get_video_stream_properties(
         }
         *interlaced = !!interlaced_tmp;
 
-        if ((av_status = handle_vhd_status(
+        if ((av_status = ff_videomaster_handle_vhd_status(
                  avctx,
                  VHD_GetChannelProperty(
                      board_handle, VHD_RX_CHANNEL, channel_index,
@@ -2253,7 +2426,7 @@ int ff_videomaster_get_video_stream_properties(
                 channel_index);
             return av_status;
         }
-        if ((av_status = handle_vhd_status(
+        if ((av_status = ff_videomaster_handle_vhd_status(
                  avctx,
                  VHD_GetChannelProperty(
                      board_handle, VHD_RX_CHANNEL, channel_index,
@@ -2269,13 +2442,14 @@ int ff_videomaster_get_video_stream_properties(
             return av_status;
         }
         if (local_stream_handle == NULL)
-            if ((av_status = handle_vhd_status(
+            if ((av_status = ff_videomaster_handle_vhd_status(
                      avctx,
-                     VHD_OpenStreamHandle(board_handle,
-                                          get_rx_stream_type_from_index(
-                                              channel_index),
-                                          VHD_DV_STPROC_JOINED, NULL,
-                                          &local_stream_handle, NULL),
+                     VHD_OpenStreamHandle(
+                         board_handle,
+                         ff_videomaster_get_rx_stream_type_from_index(
+                             channel_index),
+                         VHD_DV_STPROC_JOINED, NULL, &local_stream_handle,
+                         NULL),
                      "Stream handle opened "
                      "successfully",
                      "Failed to open stream "
@@ -2287,7 +2461,7 @@ int ff_videomaster_get_video_stream_properties(
                 return av_status;
             }
 
-        if ((av_status = handle_vhd_status(
+        if ((av_status = ff_videomaster_handle_vhd_status(
                  avctx,
                  VHD_GetStreamProperty(local_stream_handle,
                                        VHD_DV_SP_TOTAL_WIDTH,
@@ -2303,7 +2477,7 @@ int ff_videomaster_get_video_stream_properties(
             return av_status;
         }
 
-        if ((av_status = handle_vhd_status(
+        if ((av_status = ff_videomaster_handle_vhd_status(
                  avctx,
                  VHD_GetStreamProperty(local_stream_handle,
                                        VHD_DV_SP_TOTAL_HEIGHT,
@@ -2320,7 +2494,7 @@ int ff_videomaster_get_video_stream_properties(
         }
 
         if (stream_handle == NULL)
-            if ((av_status = handle_vhd_status(
+            if ((av_status = ff_videomaster_handle_vhd_status(
                      avctx, VHD_CloseStreamHandle(local_stream_handle),
                      "Stream handle closed "
                      "successfully",
@@ -2357,8 +2531,8 @@ int ff_videomaster_get_video_stream_properties(
     {
         int board_property_clock_divisor =
             get_rx_sdi_board_property_clock_divisor_from_index(channel_index);
-        VHD_STREAMTYPE stream_type = get_rx_stream_type_from_index(
-            channel_index);
+        VHD_STREAMTYPE stream_type =
+            ff_videomaster_get_rx_stream_type_from_index(channel_index);
         if (board_property_clock_divisor == -1)
         {
             av_log(avctx, AV_LOG_ERROR,
@@ -2381,7 +2555,7 @@ int ff_videomaster_get_video_stream_properties(
         // error could be returned but the video standard could still be
         // retrieved from the stream properties (for dual stream mode)
         video_info->sdi.video_standard = NB_VHD_VIDEOSTANDARDS;
-        handle_vhd_status(
+        ff_videomaster_handle_vhd_status(
             avctx,
             VHD_GetChannelProperty(board_handle, VHD_RX_CHANNEL, channel_index,
                                    VHD_SDI_CP_VIDEO_STANDARD,
@@ -2406,7 +2580,7 @@ int ff_videomaster_get_video_stream_properties(
 
             if (local_stream_handle == NULL)
             {
-                if ((av_status = handle_vhd_status(
+                if ((av_status = ff_videomaster_handle_vhd_status(
                          avctx,
                          VHD_OpenStreamHandle(board_handle, stream_type,
                                               VHD_SDI_STPROC_JOINED, NULL,
@@ -2424,7 +2598,7 @@ int ff_videomaster_get_video_stream_properties(
                 }
             }
 
-            if ((av_status = handle_vhd_status(
+            if ((av_status = ff_videomaster_handle_vhd_status(
                      avctx,
                      VHD_SetStreamProperty(local_stream_handle,
                                            VHD_SDI_SP_INTERFACE,
@@ -2442,7 +2616,7 @@ int ff_videomaster_get_video_stream_properties(
                 return av_status;
             }
 
-            if ((av_status = handle_vhd_status(
+            if ((av_status = ff_videomaster_handle_vhd_status(
                      avctx, VHD_StartStream(local_stream_handle), "",
                      "Failed to start stream to detect video "
                      "properties")) != 0)
@@ -2456,7 +2630,7 @@ int ff_videomaster_get_video_stream_properties(
                 return av_status;
             }
 
-            if ((av_status = handle_vhd_status(
+            if ((av_status = ff_videomaster_handle_vhd_status(
                      avctx,
                      VHD_GetStreamProperty(
                          local_stream_handle, VHD_SDI_SP_VIDEO_STANDARD,
@@ -2487,7 +2661,7 @@ int ff_videomaster_get_video_stream_properties(
                 return AVERROR(EIO);
             }
 
-            if ((av_status = handle_vhd_status(
+            if ((av_status = ff_videomaster_handle_vhd_status(
                      avctx,
                      VHD_GetBoardProperty(
                          board_handle, board_property_clock_divisor,
@@ -2517,7 +2691,7 @@ int ff_videomaster_get_video_stream_properties(
                 return AVERROR(EIO);
             }
 
-            if ((av_status = handle_vhd_status(
+            if ((av_status = ff_videomaster_handle_vhd_status(
                      avctx, VHD_StopStream(local_stream_handle), "",
                      "Failed to stop stream")) != 0)
             {
@@ -2532,7 +2706,7 @@ int ff_videomaster_get_video_stream_properties(
             }
 
             if (stream_handle == NULL)
-                if ((av_status = handle_vhd_status(
+                if ((av_status = ff_videomaster_handle_vhd_status(
                          avctx, VHD_CloseStreamHandle(local_stream_handle),
                          "Stream handle closed "
                          "successfully",
@@ -2549,7 +2723,7 @@ int ff_videomaster_get_video_stream_properties(
         }
         else
         {
-            if ((av_status = handle_vhd_status(
+            if ((av_status = ff_videomaster_handle_vhd_status(
                      avctx,
                      VHD_GetChannelProperty(
                          board_handle, VHD_RX_CHANNEL, channel_index,
@@ -2565,7 +2739,7 @@ int ff_videomaster_get_video_stream_properties(
                 return av_status;
             }
 
-            if ((av_status = handle_vhd_status(
+            if ((av_status = ff_videomaster_handle_vhd_status(
                      avctx,
                      VHD_GetChannelProperty(
                          board_handle, VHD_RX_CHANNEL, channel_index,
@@ -2582,7 +2756,7 @@ int ff_videomaster_get_video_stream_properties(
             }
         }
 
-        if ((av_status = handle_vhd_status(
+        if ((av_status = ff_videomaster_handle_vhd_status(
                  avctx,
                  VHD_GetVideoCharacteristics(video_info->sdi.video_standard,
                                              width, height, &interlaced_tmp,
@@ -2631,7 +2805,7 @@ bool ff_videomaster_is_3g_b_ds_interface_supported(
             ff_videomaster_get_channel_type_from_index(
                 videomaster_context->avctx, videomaster_context->board_handle,
                 videomaster_context->channel_index);
-        int stream_type = get_rx_stream_type_from_index(
+        int stream_type = ff_videomaster_get_rx_stream_type_from_index(
             videomaster_context->channel_index);
 
         if (stream_type == NB_VHD_STREAMTYPES)
@@ -2664,21 +2838,43 @@ bool ff_videomaster_is_3g_b_ds_interface_supported(
 
 bool ff_videomaster_is_channel_locked(VideoMasterContext *videomaster_context)
 {
-    bool     channel_locked = false;
-    uint32_t channel_status = 0;
-    if (handle_vhd_status(videomaster_context->avctx,
-                          VHD_GetChannelProperty(
-                              videomaster_context->board_handle, VHD_RX_CHANNEL,
-                              videomaster_context->channel_index,
-                              VHD_CORE_CP_STATUS, &channel_status),
-                          "Channel status retrieved "
-                          "successfully",
-                          "Failed to retrieve channel "
-                          "status") == 0)
+    enum AVVideoMasterChannelType channel_type =
+        ff_videomaster_get_channel_type_from_index(
+            videomaster_context->avctx, videomaster_context->board_handle,
+            videomaster_context->channel_index);
+
+    if (channel_type == AV_VIDEOMASTER_CHANNEL_HDMI)
+        return ff_videomaster_is_channel_locked_hdmi(videomaster_context);
+    else if (channel_type == AV_VIDEOMASTER_CHANNEL_IP_2110)
+        return ff_videomaster_is_channel_locked_ip(videomaster_context);
+    else if (channel_type == AV_VIDEOMASTER_CHANNEL_SDI ||
+             channel_type == AV_VIDEOMASTER_CHANNEL_ASISDI)
+        return ff_videomaster_is_channel_locked_sdi(videomaster_context);
+
+    av_log(videomaster_context->avctx, AV_LOG_DEBUG,
+           "Unknown channel type for channel %u, considered unlocked\n",
+           videomaster_context->channel_index);
+
+    /* Last resort: check the board type.  On IP boards the channel type
+     * property (VHD_CORE_CP_TYPE) may not return VHD_CHNTYPE_IP_2110 when
+     * no stream handle is open, which causes UNKNOWN to be returned above.
+     * Treat all channels of an IP board as available.
+     */
     {
-        channel_locked = !(channel_status & VHD_CORE_RXSTS_UNLOCKED);
+        ULONG board_type = 0;
+        VHD_GetBoardProperty(videomaster_context->board_handle,
+                             VHD_CORE_BP_BOARD_TYPE, &board_type);
+        if (board_type == VHD_BOARDTYPE_IP)
+        {
+            av_log(videomaster_context->avctx, AV_LOG_DEBUG,
+                   "Board %u is an IP board: treating channel %u as "
+                   "available regardless of detected channel type\n",
+                   videomaster_context->board_index,
+                   videomaster_context->channel_index);
+            return ff_videomaster_is_channel_locked_ip(videomaster_context);
+        }
     }
-    return channel_locked;
+    return false;
 }
 
 bool ff_videomaster_is_hardware_timestamp_supported(
@@ -2754,7 +2950,7 @@ bool ff_videomaster_is_ltc_on_board_timestamp_supported(
 
 int ff_videomaster_open_board_handle(VideoMasterContext *videomaster_context)
 {
-    return handle_vhd_status(
+    return ff_videomaster_handle_vhd_status(
         videomaster_context->avctx,
         VHD_OpenBoardHandle(videomaster_context->board_index,
                             &videomaster_context->board_handle, NULL, 0),
@@ -2769,10 +2965,10 @@ int ff_videomaster_open_stream_handle(VideoMasterContext *videomaster_context)
         stream_proc = VHD_SDI_STPROC_JOINED;
     // Open stream as JOINED to get audio and
     // video data
-    return handle_vhd_status(
+    return ff_videomaster_handle_vhd_status(
         videomaster_context->avctx,
         VHD_OpenStreamHandle(videomaster_context->board_handle,
-                             get_rx_stream_type_from_index(
+                             ff_videomaster_get_rx_stream_type_from_index(
                                  videomaster_context->channel_index),
                              stream_proc, NULL,
                              &videomaster_context->stream_handle, NULL),
@@ -2833,243 +3029,66 @@ const char *ff_videomaster_sample_size_to_string(
 
 int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
 {
-    int                                 av_error = 0;
-    int                                 has_field_merge_capability = 0;
-    const VideoMasterBufferPackingInfo *info = NULL;
+    int av_error = 0;
+
     av_log(videomaster_context->avctx, AV_LOG_TRACE,
            "ff_videomaster_start_stream: IN\n");
 
-    handle_vhd_status(videomaster_context->avctx,
-                      disable_loopback_on_channel(videomaster_context), "", "");
-
+    /* 1. Tech-specific dispatcher: configure stream properties for the channel
+     * type */
     if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_HDMI)
-    {
-        handle_vhd_status(
-            videomaster_context->avctx,
-            VHD_SetStreamProperty(videomaster_context->stream_handle,
-                                  VHD_DV_SP_ACTIVE_WIDTH,
-                                  videomaster_context->video_width),
-            "", "");
-        handle_vhd_status(
-            videomaster_context->avctx,
-            VHD_SetStreamProperty(videomaster_context->stream_handle,
-                                  VHD_DV_SP_ACTIVE_HEIGHT,
-                                  videomaster_context->video_height),
-            "", "");
-        handle_vhd_status(
-            videomaster_context->avctx,
-            VHD_SetStreamProperty(videomaster_context->stream_handle,
-                                  VHD_DV_SP_INTERLACED,
-                                  (ULONG)videomaster_context->video_interlaced),
-            "", "");
-        handle_vhd_status(
-            videomaster_context->avctx,
-            VHD_SetStreamProperty(
-                videomaster_context->stream_handle, VHD_DV_SP_REFRESH_RATE,
-                videomaster_context->video_info.hdmi.refresh_rate),
-            "", "");
-        handle_vhd_status(videomaster_context->avctx,
-                          VHD_SetStreamProperty(
-                              videomaster_context->stream_handle,
-                              VHD_DV_SP_PIXEL_CLOCK,
-                              videomaster_context->video_info.hdmi.pixel_clock),
-                          "", "");
-        handle_vhd_status(
-            videomaster_context->avctx,
-            VHD_SetStreamProperty(
-                videomaster_context->stream_handle, VHD_DV_SP_CS,
-                (ULONG)videomaster_context->video_info.hdmi.color_space),
-            "", "");
-        handle_vhd_status(
-            videomaster_context->avctx,
-            VHD_SetStreamProperty(
-                videomaster_context->stream_handle,
-                VHD_DV_SP_CABLE_BIT_SAMPLING,
-                (ULONG)videomaster_context->video_info.hdmi.cable_bit_sampling),
-            "", "");
-    }
+        av_error = ff_videomaster_start_stream_hdmi(videomaster_context);
+    else if (videomaster_context->channel_type ==
+             AV_VIDEOMASTER_CHANNEL_IP_2110)
+        av_error = ff_videomaster_start_stream_ip(videomaster_context);
     else
-    {
-        /* Set the primary mode of this
-         * channel to ASI */
-        if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_ASISDI)
-            handle_vhd_status(
-                videomaster_context->avctx,
-                VHD_SetChannelProperty(videomaster_context->board_handle,
-                                       VHD_RX_CHANNEL,
-                                       videomaster_context->channel_index,
-                                       VHD_CORE_CP_MODE, VHD_CHANNEL_MODE_SDI),
-                "", "");
+        av_error = ff_videomaster_start_stream_sdi(videomaster_context);
 
-        handle_vhd_status(
-            videomaster_context->avctx,
-            VHD_SetStreamProperty(
-                videomaster_context->stream_handle, VHD_SDI_SP_VIDEO_STANDARD,
-                videomaster_context->video_info.sdi.video_standard),
-            "", "");
-        handle_vhd_status(
-            videomaster_context->avctx,
-            VHD_SetStreamProperty(
-                videomaster_context->stream_handle,
-                VHD_SDI_BP_GENLOCK_CLOCK_DIV,
-                videomaster_context->video_info.sdi.clock_divisor),
-            "", "");
-        handle_vhd_status(videomaster_context->avctx,
-                          VHD_SetStreamProperty(
-                              videomaster_context->stream_handle,
-                              VHD_SDI_SP_INTERFACE,
-                              videomaster_context->video_info.sdi.interface),
-                          "", "");
+    if (av_error != 0)
+        return av_error;
 
-        if (videomaster_context->has_audio)
-            init_audio_info(videomaster_context,
-                            &videomaster_context->audio_info.sdi.audio_info);
-    }
+    /* 2. Common setup: applies to all technologies */
+    disable_loopback_on_channel(videomaster_context);
+    setup_field_merge(videomaster_context);
+    setup_transfer_scheme(videomaster_context);
 
-    if (videomaster_context->video_interlaced)
-    {
-        handle_vhd_status(
-            videomaster_context->avctx,
-            VHD_GetBoardCapability(videomaster_context->board_handle,
-                                   VHD_CORE_BOARD_CAP_FIELD_MERGING,
-                                   &has_field_merge_capability),
-            "", "");
-        if (has_field_merge_capability)
-            handle_vhd_status(
-                videomaster_context->avctx,
-                VHD_SetStreamProperty(videomaster_context->stream_handle,
-                                      VHD_CORE_SP_FIELD_MERGE, true),
-                "", "Unable to set field merge property for interlaced stream");
-        else
-            av_log(videomaster_context->avctx, AV_LOG_WARNING,
-                   "Field merge not supported on "
-                   "this board, interlaced "
-                   "content might be affected\n");
-    }
+    av_error = setup_buffer_packing(videomaster_context);
+    if (av_error != 0)
+        return av_error;
 
-    handle_vhd_status(videomaster_context->avctx,
-                      VHD_SetStreamProperty(videomaster_context->stream_handle,
-                                            VHD_CORE_SP_TRANSFER_SCHEME,
-                                            VHD_TRANSFER_SLAVED),
-                      "", "");
-    if (videomaster_context->video_buffer_packing ==
-        AV_NB_VIDEOMASTER_BUFFER_PACKINGS)
-    {
-        bool has_line_padding =
-            (VHD_SetStreamProperty(videomaster_context->stream_handle,
-                                   VHD_CORE_SP_LINE_PADDING,
-                                   128) == VHDERR_INVALIDPROPERTY);
-        info = get_buffer_packing_info(
-            has_line_padding ? AV_VIDEOMASTER_BUFFER_PACKING_YUV422_10
-                             : AV_VIDEOMASTER_BUFFER_PACKING_YUV422_8);
-    }
-    else
-    {
-        info = get_buffer_packing_info(
-            videomaster_context->video_buffer_packing);
-    }
-
-    if (!info)
-    {
-        av_log(videomaster_context->avctx, AV_LOG_ERROR,
-               "Not implemented video buffer packing: %s\n",
-               VHD_BUFFERPACKING_ToPrettyString(
-                   videomaster_context->video_buffer_packing));
-        return AVERROR(EINVAL);
-    }
-
-    handle_vhd_status(videomaster_context->avctx,
-                      VHD_SetStreamProperty(videomaster_context->stream_handle,
-                                            VHD_CORE_SP_BUFFER_PACKING,
-                                            info->buffer_packing),
-                      "", "");
-    if (info->codec_or_pixel_format)
-        videomaster_context->video_codec = info->format.codec_id;
-    else
-    {
-        videomaster_context->video_codec = AV_CODEC_ID_RAWVIDEO;
-        videomaster_context->video_pixel_format = info->format.pixel_format;
-    }
-    videomaster_context->video_bit_rate = av_rescale(
-        videomaster_context->video_width * videomaster_context->video_height *
-            info->bits_per_pixel,
-        videomaster_context->video_frame_rate_num * info->bit_rate_num_mul,
-        videomaster_context->video_frame_rate_den * info->bit_rate_den_mul);
-
-    if (info->line_padding_needed &&
-
-        VHD_SetStreamProperty(videomaster_context->stream_handle,
-                              VHD_CORE_SP_LINE_PADDING,
-                              128) == VHDERR_INVALIDPROPERTY)
-    {
-        av_log(videomaster_context->avctx, AV_LOG_ERROR,
-               "Board does not support line padding property. Unable "
-               "to select %s video buffer packing explictly. Leave the "
-               "option unset or select "
-               "another buffer packing.\n",
-               VHD_BUFFERPACKING_ToPrettyString(info->buffer_packing));
-        return AVERROR(EINVAL);
-    }
-
-    av_log(videomaster_context->avctx, AV_LOG_INFO,
-           "Video buffer packing selected: %s\n",
-           VHD_BUFFERPACKING_ToPrettyString(info->buffer_packing));
-
-    // add more delay to get stream and no
-    // time-out error
-    GET_AND_CHECK(handle_vhd_status, videomaster_context->avctx,
+    /* 3. Configure I/O timeout */
+    GET_AND_CHECK(ff_videomaster_handle_vhd_status, videomaster_context->avctx,
                   videomaster_context->avctx,
                   VHD_SetStreamProperty(videomaster_context->stream_handle,
                                         VHD_CORE_SP_IO_TIMEOUT, 10000),
-                  "Stream time-out has been set to "
-                  "10000ms",
+                  "Stream time-out has been set to 10000ms",
                   "Unable to set stream time-out");
-    if (videomaster_context->timestamp_source <
-        AV_VIDEOMASTER_TIMESTAMP_HARDWARE)
-        GET_AND_CHECK(
-            handle_vhd_status, videomaster_context->avctx,
-            videomaster_context->avctx,
-            VHD_SetBoardProperty(
-                videomaster_context->board_handle,
-                VHD_CORE_BP_SYSTEM_TIME_CLK_TYPE,
-                get_videomaster_enumeration_value_for_timestamp_source(
-                    videomaster_context->timestamp_source)),
-            "System time clock type set "
-            "successfully",
-            "Failed to set system time clock "
-            "type");
-    else if (videomaster_context->timestamp_source ==
-             AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD)
-    {
-        GET_AND_CHECK(handle_vhd_status, videomaster_context->avctx,
-                      videomaster_context->avctx,
-                      VHD_SetBoardProperty(
-                          videomaster_context->board_handle,
-                          VHD_SDI_BP_BLACKBURST0_DETECTION_ENABLE, FALSE),
-                      "Disable Blackburst detection for LTC on-board signal",
-                      "Failed to disable Blackburst detection for LTC on-board "
-                      "signal");
-    }
 
-    GET_AND_CHECK(handle_vhd_status, videomaster_context->avctx,
+    /* 4. Configure timestamp source */
+    av_error = setup_timestamp_source(videomaster_context);
+    if (av_error != 0)
+        return av_error;
+
+    /* 5. Start the stream */
+    GET_AND_CHECK(ff_videomaster_handle_vhd_status, videomaster_context->avctx,
                   videomaster_context->avctx,
                   VHD_StartStream(videomaster_context->stream_handle),
                   "Stream started successfully", "Failed to start stream");
 
     av_log(videomaster_context->avctx, AV_LOG_TRACE,
-           "ff_videomaster_start_stream: IN\n");
+           "ff_videomaster_start_stream: OUT\n");
+
     return 0;
 }
 
 int ff_videomaster_stop_stream(VideoMasterContext *videomaster_context)
 {
-
     release_audio_info(videomaster_context,
                        &videomaster_context->audio_info.sdi.audio_info);
-    return handle_vhd_status(videomaster_context->avctx,
-                             VHD_StopStream(videomaster_context->stream_handle),
-                             "Stream stopped successfully",
-                             "Failed to stop stream");
+    return ff_videomaster_handle_vhd_status(
+        videomaster_context->avctx,
+        VHD_StopStream(videomaster_context->stream_handle),
+        "Stream stopped successfully", "Failed to stop stream");
 }
 
 const char *ff_videomaster_timestamp_type_to_string(
