@@ -56,6 +56,77 @@ static bool ip_is_multicast(uint32_t ipv4_addr)
 }
 
 /**
+ * @brief   Validates the arguments for an IP/ST2110 stream (video side).
+ * Returns AVERROR(EINVAL) if any argument is invalid.
+ *
+ * @param videomaster_data    IP/ST2110 stream data structure.
+ * @param videomaster_context IP/ST2110 stream context.
+ * @return int               0 if arguments are valid, AVERROR(EINVAL)
+ * otherwise.
+ */
+static int validate_video_arguments(VideoMasterData    *videomaster_data,
+                                    VideoMasterContext *videomaster_context)
+{
+    CHECK_INT64_ARG_HAS_BEEN_SET(videomaster_context->avctx,
+                                 videomaster_data->ip_video_width,
+                                 "ip_video_width",
+                                 ff_videomaster_channel_type_to_string(
+                                     videomaster_context->channel_type));
+    CHECK_INT64_ARG_HAS_BEEN_SET(videomaster_context->avctx,
+                                 videomaster_data->ip_video_height,
+                                 "ip_video_height",
+                                 ff_videomaster_channel_type_to_string(
+                                     videomaster_context->channel_type));
+    CHECK_INT64_ARG_HAS_BEEN_SET(videomaster_context->avctx,
+                                 videomaster_data->ip_video_framerate_num,
+                                 "ip_video_framerate_num",
+                                 ff_videomaster_channel_type_to_string(
+                                     videomaster_context->channel_type));
+    CHECK_INT64_ARG_HAS_BEEN_SET(videomaster_context->avctx,
+                                 videomaster_data->ip_video_framerate_den,
+                                 "ip_video_framerate_den",
+                                 ff_videomaster_channel_type_to_string(
+                                     videomaster_context->channel_type));
+    CHECK_INT64_ARG_HAS_BEEN_SET(videomaster_context->avctx,
+                                 videomaster_data->ip_video_interlaced,
+                                 "ip_video_interlaced",
+                                 ff_videomaster_channel_type_to_string(
+                                     videomaster_context->channel_type));
+    CHECK_INT64_ARG_HAS_BEEN_SET(videomaster_context->avctx,
+                                 videomaster_data->ip_video_bit_depth,
+                                 "ip_video_bit_depth",
+                                 ff_videomaster_channel_type_to_string(
+                                     videomaster_context->channel_type));
+}
+
+/**
+ * @brief   Validates the arguments for an IP/ST2110 stream (network side).
+ * Returns AVERROR(EINVAL) if any argument is invalid.
+ *
+ * @param videomaster_data    IP/ST2110 stream data structure.
+ * @param videomaster_context IP/ST2110 stream context.
+ * @return int               0 if arguments are valid, AVERROR(EINVAL)
+ * otherwise.
+ */
+static int validate_network_arguments(VideoMasterData    *videomaster_data,
+                                      VideoMasterContext *videomaster_context)
+{
+    if (videomaster_data->ip_destination == NULL)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Argument ip_destination is required for %s channels.\n",
+               ff_videomaster_channel_type_to_string(
+                   videomaster_context->channel_type));
+        return AVERROR(EINVAL);
+    }
+
+    CHECK_INT64_ARG_HAS_BEEN_SET(videomaster_context->avctx,
+                                 videomaster_data->ip_udp_port, "ip_udp_port",
+                                 ff_videomaster_channel_type_to_string(
+                                     videomaster_context->channel_type));
+}
+
+/**
  * @brief Searches the ST2110-20 video standard table for an entry that
  *        matches the explicit resolution, framerate and interlacing stored
  *        in the context.
@@ -65,7 +136,8 @@ static bool ip_is_multicast(uint32_t ipv4_addr)
  * The framerate comparison is intentionally integer (floor), which allows
  * a fractional 59.94 standard to match a "60000/1001" user specification.
  *
- * @param videomaster_context Context carrying the explicit video parameters.
+ * @param videomaster_context Context carrying the explicit video
+ * parameters.
  * @param video_standard      Output: matched ST2110-20 video standard.
  * @return 0 on success, AVERROR(EINVAL) if no standard matches.
  */
@@ -112,21 +184,30 @@ static int get_st2110_video_standard_from_explicit(
 int ff_videomaster_validate_arguments_ip(
     VideoMasterData *videomaster_data, VideoMasterContext *videomaster_context)
 {
-    /* buffer_packing and dual_stream are not applicable for IP */
+    /* buffer_packing is determined by the stream bit depth for IP; warn only
+     * if the user explicitly set it (i.e. not the sentinel value). */
     if (videomaster_context->video_buffer_packing !=
-        AV_VIDEOMASTER_BUFFER_PACKING_YUV422_8)
+        AV_NB_VIDEOMASTER_BUFFER_PACKINGS)
     {
         av_log(videomaster_context->avctx, AV_LOG_WARNING,
-               "buffer_packing is not applicable for IP 2110 mode. "
-               "Using fixed YUV422_8.\n");
+               "buffer_packing is not applicable for IP 2110 mode and will "
+               "be ignored. Buffer packing is determined by the stream bit "
+               "depth.\n");
     }
 
     if (videomaster_context->dual_stream)
     {
-        av_log(videomaster_context->avctx, AV_LOG_WARNING,
-               "dual_stream is not applicable for IP 2110 mode. Ignoring.\n");
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "dual_stream is not applicable for IP 2110 channels.\n");
+        return AVERROR(EINVAL);
     }
 
+    /* Some IP arguments are mandatory to configure IP stream */
+
+    if (validate_network_arguments(videomaster_data, videomaster_context) !=
+            0 ||
+        validate_video_arguments(videomaster_data, videomaster_context) != 0)
+        return AVERROR(EINVAL);
     return 0;
 }
 
@@ -159,15 +240,43 @@ int ff_videomaster_check_channel_integrity_ip(
         return AVERROR(EIO);
     }
 
-    if (ff_videomaster_open_stream_handle(videomaster_context) != 0)
+    /* VHD_OpenStreamHandle in JOINED mode is not supported for IP ST2110.
+     * Use VHD_OpenEssenceStreamHandle with VHD_ET_ST2110_20 instead. */
     {
+        VHD_ERRORCODE open_status = (VHD_ERRORCODE)VHD_OpenEssenceStreamHandle(
+            videomaster_context->board_handle, VHD_ET_ST2110_20, VHD_RX_CHANNEL,
+            videomaster_context->channel_index, NULL,
+            &videomaster_context->stream_handle);
+
+        if (open_status == VHDERR_NOERROR)
+        {
+            av_log(videomaster_context->avctx, AV_LOG_TRACE,
+                   "IP ST2110-20 stream handle opened successfully.\n");
+            return 0;
+        }
+
+        /* Log the VHD error and channel availability at ERROR level so the
+         * caller does not need -loglevel debug to diagnose the failure. */
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
-               "Failed to open stream handle.\n");
+               "Failed to open IP ST2110-20 stream handle on channel %u: "
+               "%s (VHD error %d), channel status: %s.\n",
+               videomaster_context->channel_index,
+               VHD_ERRORCODE_ToPrettyString(open_status), (int)open_status,
+               ff_videomaster_get_channel_status_ip(videomaster_context));
+
+        if (open_status == VHDERR_STREAMUSED ||
+            open_status == VHDERR_CHANNELUSED)
+        {
+            av_log(videomaster_context->avctx, AV_LOG_ERROR,
+                   "Channel %u is already opened by another process. "
+                   "Use 'ffmpeg -sources videomaster' to inspect channel "
+                   "availability.\n",
+                   videomaster_context->channel_index);
+            return AVERROR(EBUSY);
+        }
+
         return AVERROR(EIO);
     }
-
-    av_log(videomaster_context->avctx, AV_LOG_TRACE,
-           "Stream handle opened successfully\n");
 
     return 0;
 }
@@ -193,12 +302,12 @@ bool ff_videomaster_is_channel_locked_ip(
     return true;
 }
 
-const char *ff_videomaster_get_channel_status_ip(
-    VideoMasterContext *videomaster_context)
+const char *
+ff_videomaster_get_channel_status_ip(VideoMasterContext *videomaster_context)
 {
     uint32_t availability = 0;
-    uint32_t rx_index     = videomaster_context->channel_index;
-    uint32_t bit          = (rx_index / 4) * 8 + (rx_index % 4);
+    uint32_t rx_index = videomaster_context->channel_index;
+    uint32_t bit = (rx_index / 4) * 8 + (rx_index % 4);
 
     if (VHD_GetBoardProperty(videomaster_context->board_handle,
                              VHD_CORE_BP_CHN_AVAILABILITY,
@@ -357,22 +466,42 @@ int ff_videomaster_start_stream_ip_explicit(
                   "Configured ST2110 RX filtering mask",
                   "Failed to configure ST2110 RX filtering mask");
 
-    /* Fixed buffer packing for ST2110: always YUV 4:2:2 8-bit unpacked. */
-    GET_AND_CHECK(ff_videomaster_handle_vhd_status, videomaster_context->avctx,
-                  videomaster_context->avctx,
-                  VHD_SetStreamProperty(videomaster_context->stream_handle,
-                                        VHD_CORE_SP_BUFFER_PACKING,
-                                        VHD_BUFPACK_VIDEO_YUV422_8),
-                  "Configured ST2110 buffer packing (YUV422_8)",
-                  "Failed to configure ST2110 buffer packing");
-
-    videomaster_context->video_codec = AV_CODEC_ID_RAWVIDEO;
-    videomaster_context->video_pixel_format = AV_PIX_FMT_UYVY422;
-    videomaster_context->video_bit_rate =
-        av_rescale((int64_t)videomaster_context->video_width *
-                       videomaster_context->video_height * 16,
-                   videomaster_context->video_frame_rate_num,
-                   videomaster_context->video_frame_rate_den);
+    /* Buffer packing depends on the requested bit depth. */
+    if (videomaster_context->ip_video_depth == VHD_ST2110_20_DEPTH_10BIT)
+    {
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status,
+                      videomaster_context->avctx, videomaster_context->avctx,
+                      VHD_SetStreamProperty(videomaster_context->stream_handle,
+                                            VHD_CORE_SP_BUFFER_PACKING,
+                                            VHD_BUFPACK_VIDEO_YUV422_10),
+                      "Configured ST2110 buffer packing (YUV422_10 / V210)",
+                      "Failed to configure ST2110 buffer packing");
+        videomaster_context->video_codec = AV_CODEC_ID_V210;
+        videomaster_context->video_pixel_format = AV_PIX_FMT_NONE;
+        /* V210: 64 bits per 6 pixels */
+        videomaster_context->video_bit_rate =
+            av_rescale((int64_t)videomaster_context->video_width *
+                           videomaster_context->video_height * 64,
+                       videomaster_context->video_frame_rate_num,
+                       videomaster_context->video_frame_rate_den * 3);
+    }
+    else
+    {
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status,
+                      videomaster_context->avctx, videomaster_context->avctx,
+                      VHD_SetStreamProperty(videomaster_context->stream_handle,
+                                            VHD_CORE_SP_BUFFER_PACKING,
+                                            VHD_BUFPACK_VIDEO_YUV422_8),
+                      "Configured ST2110 buffer packing (YUV422_8)",
+                      "Failed to configure ST2110 buffer packing");
+        videomaster_context->video_codec = AV_CODEC_ID_RAWVIDEO;
+        videomaster_context->video_pixel_format = AV_PIX_FMT_UYVY422;
+        videomaster_context->video_bit_rate =
+            av_rescale((int64_t)videomaster_context->video_width *
+                           videomaster_context->video_height * 16,
+                       videomaster_context->video_frame_rate_num,
+                       videomaster_context->video_frame_rate_den);
+    }
 
     return 0;
 }

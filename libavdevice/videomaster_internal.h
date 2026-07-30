@@ -59,6 +59,18 @@
         }                                                                      \
     } while (0)
 
+#define CHECK_INT64_ARG_HAS_BEEN_SET(avctx, arg, arg_name, channel_type)       \
+    do                                                                         \
+    {                                                                          \
+        if (arg < 0)                                                           \
+        {                                                                      \
+            av_log(avctx, AV_LOG_ERROR,                                        \
+                   "Argument %s is required for %s channels.\n", arg_name,     \
+                   channel_type);                                              \
+            return AVERROR(EINVAL);                                            \
+        }                                                                      \
+    } while (0)
+
 /**
  * @brief Translates a VHD_ERRORCODE into a FFmpeg AVERROR and logs it.
  *
@@ -90,5 +102,14 @@ int ff_videomaster_handle_av_error(AVFormatContext *avctx, int av_error,
  * @return NB_VHD_STREAMTYPES if the index is out of range.
  */
 VHD_STREAMTYPE ff_videomaster_get_rx_stream_type_from_index(uint32_t index);
+
+/**
+ * @brief Converts an AVVideoMasterChannelType to a readable string.
+ *
+ * @param channel_type Channel type value
+ * @return const char* Human-readable channel type
+ */
+const char *ff_videomaster_channel_type_to_string(
+    enum AVVideoMasterChannelType channel_type);
 
 #endif /* AVDEVICE_VIDEOMASTER_INTERNAL_H */

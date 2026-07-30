@@ -72,15 +72,6 @@ static int check_channel_index(VideoMasterContext *videomaster_context);
 static int check_channel_integrity(VideoMasterContext *videomaster_context);
 
 /**
- * @brief  Checks if the dual-stream mode can be enabled based on the device
- * capabilities
- *
- * @param videomaster_context VideoMasterContext pointer to the VideoMaster
- * context
- * @return int  0 on success, or negative AVERROR code on failure
- */
-static int check_dual_stream(VideoMasterContext *videomaster_context);
-
 /**
  * @brief Checks the integrity of all arguments passed in the FFmpeg
  * command-line in the VideoMaster context.
@@ -258,30 +249,6 @@ static int check_board_index(VideoMasterContext *videomaster_context)
     return 0;
 }
 
-static int check_dual_stream(VideoMasterContext *videomaster_context)
-{
-    if (videomaster_context->dual_stream &&
-        !ff_videomaster_is_3g_b_ds_interface_supported(videomaster_context))
-    {
-        av_log(videomaster_context->avctx, AV_LOG_ERROR,
-               "3G-B DS interface is not supported on this device and for this "
-               "channel. Dual-stream "
-               "mode cannot be enabled.\n");
-        return AVERROR(EINVAL);
-    }
-    else if (videomaster_context->dual_stream)
-    {
-        av_log(videomaster_context->avctx, AV_LOG_TRACE,
-               "3G-B Dual-Stream interface enabled\n");
-    }
-    else
-    {
-        av_log(videomaster_context->avctx, AV_LOG_TRACE,
-               "3G-B Dual-Stream interface disabled\n");
-    }
-    return 0;
-}
-
 static int check_channel_index(VideoMasterContext *videomaster_context)
 {
     if (ff_videomaster_get_nb_rx_channels(videomaster_context) == 0)
@@ -311,11 +278,6 @@ static int check_channel_integrity(VideoMasterContext *videomaster_context)
 {
     videomaster_context->has_video = false;
     videomaster_context->has_audio = false;
-
-    videomaster_context->channel_type =
-        ff_videomaster_get_channel_type_from_index(
-            videomaster_context->avctx, videomaster_context->board_handle,
-            videomaster_context->channel_index);
 
     /* Early exit: channel not locked and not IP */
     if (videomaster_context->channel_type != AV_VIDEOMASTER_CHANNEL_IP_2110 &&
@@ -362,19 +324,10 @@ static int check_header_arguments(VideoMasterData    *videomaster_data,
                                   status);
     }
 
-    if ((status = check_dual_stream(videomaster_context)) != 0)
-    {
-        return handle_board_error(videomaster_context,
-                                  "Failed to check dual-stream integrity",
-                                  status);
-    }
-
-    if ((status = check_channel_integrity(videomaster_context)) != 0)
-    {
-        return handle_board_error(videomaster_context,
-                                  "Failed to check channel index integrity",
-                                  status);
-    }
+    videomaster_context->channel_type =
+        ff_videomaster_get_channel_type_from_index(
+            videomaster_context->avctx, videomaster_context->board_handle,
+            videomaster_context->channel_index);
 
     /* Validate tech-specific arguments after channel_type is known */
     if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_HDMI)
@@ -382,9 +335,9 @@ static int check_header_arguments(VideoMasterData    *videomaster_data,
         if ((status = ff_videomaster_validate_arguments_hdmi(
                  videomaster_data, videomaster_context)) != 0)
         {
-            return handle_board_error(videomaster_context,
-                                      "Invalid arguments for HDMI channel",
-                                      status);
+            return handle_board_error(
+                videomaster_context,
+                "Invalid or missing arguments for HDMI channel", status);
         }
     }
     else if (videomaster_context->channel_type ==
@@ -393,9 +346,9 @@ static int check_header_arguments(VideoMasterData    *videomaster_data,
         if ((status = ff_videomaster_validate_arguments_ip(
                  videomaster_data, videomaster_context)) != 0)
         {
-            return handle_board_error(videomaster_context,
-                                      "Invalid arguments for IP 2110 channel",
-                                      status);
+            return handle_board_error(
+                videomaster_context,
+                "Invalid or missing arguments for IP 2110 channel", status);
         }
     }
     else
@@ -403,10 +356,17 @@ static int check_header_arguments(VideoMasterData    *videomaster_data,
         if ((status = ff_videomaster_validate_arguments_sdi(
                  videomaster_data, videomaster_context)) != 0)
         {
-            return handle_board_error(videomaster_context,
-                                      "Invalid arguments for SDI channel",
-                                      status);
+            return handle_board_error(
+                videomaster_context,
+                "Invalid or missing arguments for SDI channel", status);
         }
+    }
+
+    if ((status = check_channel_integrity(videomaster_context)) != 0)
+    {
+        return handle_board_error(videomaster_context,
+                                  "Failed to check channel index integrity",
+                                  status);
     }
 
     if ((status = check_timestamp_source(videomaster_context)) != 0)
@@ -763,7 +723,10 @@ static int parse_ipv4_address(const char *ip_string, uint32_t *out_address)
     if (!ip_string || !out_address)
         return AVERROR(EINVAL);
 
-    if (sscanf(ip_string, "%u.%u.%u.%u%c", &a, &b, &c, &d, &tail) != 4)
+    /* Exactly 4 items must match; tail captures any trailing character.
+     * If sscanf returns 5, there are extra characters after the address. */
+    if (sscanf(ip_string, "%u.%u.%u.%u%c", &a, &b, &c, &d, &tail) != 4 ||
+        tail != '\0')
         return AVERROR(EINVAL);
 
     if (a > 255 || b > 255 || c > 255 || d > 255)
@@ -836,8 +799,7 @@ static int setup_video_stream(VideoMasterContext *videomaster_context)
         av_stream->codecpar->format = videomaster_context->video_pixel_format;
         av_stream->codecpar->field_order = AV_FIELD_PROGRESSIVE;
 
-        /* Broadcast content is always limited (studio
-                                 swing) range. */
+        /* Broadcast content is always limited (studio swing) range. */
         av_stream->codecpar->color_range = AVCOL_RANGE_MPEG;
 
         /*
@@ -1654,8 +1616,8 @@ static const AVOption options[] = {
       "UDP destination port for main ST2110 stream in explicit mode.",
       OFFSET(ip_udp_port),
       AV_OPT_TYPE_INT64,
-      { .i64 = 0 },
-      0,
+      { .i64 = -1 },
+      -1,
       65535,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
@@ -1663,7 +1625,7 @@ static const AVOption options[] = {
       "RTP payload type for main ST2110 stream in explicit mode.",
       OFFSET(ip_payload_type),
       AV_OPT_TYPE_INT64,
-      { .i64 = 0 },
+      { .i64 = 96 },
       0,
       127,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,

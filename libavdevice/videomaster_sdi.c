@@ -57,6 +57,26 @@ extern int ff_videomaster_get_audio_stream_properties(
 int ff_videomaster_validate_arguments_sdi(
     VideoMasterData *videomaster_data, VideoMasterContext *videomaster_context)
 {
+    /* Dual-stream is SDI-only; validate capability */
+    if (videomaster_context->dual_stream &&
+        !ff_videomaster_is_3g_b_ds_interface_supported(videomaster_context))
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "3G-B DS interface is not supported on this device and for this "
+               "channel. Dual-stream mode cannot be enabled.\n");
+        return AVERROR(EINVAL);
+    }
+    else if (videomaster_context->dual_stream)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "3G-B Dual-Stream interface enabled\n");
+    }
+    else
+    {
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "3G-B Dual-Stream interface disabled\n");
+    }
+
     /* IP arguments must not be specified for SDI */
     if (videomaster_data->ip_destination != NULL ||
         videomaster_data->ip_udp_port > 0 ||
@@ -210,8 +230,8 @@ void ff_videomaster_format_channel_description_sdi(
     VideoMasterContext *videomaster_context, const char *board_name,
     const char *serial_number, char *buf, size_t buf_size)
 {
-    double     frame_rate = (double)videomaster_context->video_frame_rate_num /
-                            videomaster_context->video_frame_rate_den;
+    double      frame_rate = (double)videomaster_context->video_frame_rate_num /
+                             videomaster_context->video_frame_rate_den;
     const char *interface_str = VHD_INTERFACE_ToPrettyString(
         videomaster_context->video_info.sdi.interface);
 
@@ -220,7 +240,8 @@ void ff_videomaster_format_channel_description_sdi(
              videomaster_context->video_width,
              videomaster_context->video_height,
              videomaster_context->video_interlaced ? "i" : "p",
-             videomaster_context->video_interlaced ? frame_rate * 2 : frame_rate,
+             videomaster_context->video_interlaced ? frame_rate * 2
+                                                   : frame_rate,
              interface_str, board_name, serial_number);
 }
 
@@ -263,4 +284,3 @@ int ff_videomaster_start_stream_sdi(VideoMasterContext *videomaster_context)
 
     return 0;
 }
-

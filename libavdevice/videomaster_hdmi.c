@@ -28,7 +28,6 @@
 #include "libavutil/log.h"
 #include "videomaster_internal.h"
 
-
 #if defined(__APPLE__)
 #include <VideoMasterHD/VideoMasterHD_Core.h>
 #include <VideoMasterHD/VideoMasterHD_String.h>
@@ -58,6 +57,14 @@ extern int ff_videomaster_get_audio_stream_properties(
 int ff_videomaster_validate_arguments_hdmi(
     VideoMasterData *videomaster_data, VideoMasterContext *videomaster_context)
 {
+    /* dual_stream is SDI-only */
+    if (videomaster_context->dual_stream)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "dual_stream is not applicable for HDMI channels.\n");
+        return AVERROR(EINVAL);
+    }
+
     /* IP arguments must not be specified for HDMI */
     if (videomaster_data->ip_destination != NULL ||
         videomaster_data->ip_udp_port > 0 ||
@@ -226,8 +233,7 @@ void ff_videomaster_format_channel_description_hdmi(
                  videomaster_context->video_info.hdmi.cable_bit_sampling),
              videomaster_context->audio_nb_channels,
              videomaster_context->audio_sample_rate,
-             videomaster_context->audio_sample_size, board_name,
-             serial_number);
+             videomaster_context->audio_sample_size, board_name, serial_number);
 }
 
 /* ---- Stream setup functions ---- */
@@ -279,4 +285,3 @@ int ff_videomaster_start_stream_hdmi(VideoMasterContext *videomaster_context)
 
     return 0;
 }
-

@@ -190,15 +190,6 @@ format_fallback_device_description(VideoMasterContext *videomaster_context,
 static char *format_device_name(VideoMasterContext *videomaster_context,
                                 const char         *board_name,
                                 const char         *serial_number);
-
-/**
- * @brief Converts an AVVideoMasterChannelType to a readable string.
- *
- * @param channel_type Channel type value
- * @return const char* Human-readable channel type
- */
-static const char *
-channel_type_to_string(enum AVVideoMasterChannelType channel_type);
 /**
  * @brief Get the active loopback property for a given channel index
  *
@@ -863,7 +854,7 @@ format_fallback_device_description(VideoMasterContext *videomaster_context,
                                    const char         *serial_number)
 {
     char       *device_description = av_mallocz(256);
-    const char *channel_type = channel_type_to_string(
+    const char *channel_type = ff_videomaster_channel_type_to_string(
         videomaster_context->channel_type);
     const char *status;
 
@@ -906,8 +897,8 @@ static char *format_device_name(VideoMasterContext *videomaster_context,
     return device_name;
 }
 
-static const char *
-channel_type_to_string(enum AVVideoMasterChannelType channel_type)
+const char *ff_videomaster_channel_type_to_string(
+    enum AVVideoMasterChannelType channel_type)
 {
     switch (channel_type)
     {
@@ -3052,9 +3043,14 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
     setup_field_merge(videomaster_context);
     setup_transfer_scheme(videomaster_context);
 
-    av_error = setup_buffer_packing(videomaster_context);
-    if (av_error != 0)
-        return av_error;
+    /* IP buffer packing, codec and pixel format are already configured in
+     * ff_videomaster_start_stream_ip_explicit; skip generic detection. */
+    if (videomaster_context->channel_type != AV_VIDEOMASTER_CHANNEL_IP_2110)
+    {
+        av_error = setup_buffer_packing(videomaster_context);
+        if (av_error != 0)
+            return av_error;
+    }
 
     /* 3. Configure I/O timeout */
     GET_AND_CHECK(ff_videomaster_handle_vhd_status, videomaster_context->avctx,
