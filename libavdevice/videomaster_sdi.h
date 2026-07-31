@@ -85,6 +85,61 @@ int ff_videomaster_sdi_init_audio_info(VideoMasterContext *videomaster_context,
                                        VHD_AUDIOINFO      *audio_info);
 
 /**
+ * @brief Releases SDI/ASI allocated audio channel buffers.
+ *
+ * Frees audio_info->pAudioGroups[*].pAudioChannels[*].pData where allocated.
+ *
+ * @param videomaster_context The VideoMaster context.
+ * @param audio_info The audio info structure to release.
+ * @return 0 on success.
+ */
+int ff_videomaster_release_audio_info_sdi(
+    VideoMasterContext *videomaster_context, VHD_AUDIOINFO *audio_info);
+
+/**
+ * @brief Extracts SDI/ASI audio payload and allocates interleaved buffer.
+ *
+ * Reads SDI audio from slot into audio_info and converts it to an interleaved
+ * linear buffer stored in videomaster_context->audio_buffer.
+ *
+ * @param videomaster_context The VideoMaster context.
+ * @return 0 on success, negative AVERROR code on failure.
+ */
+int ff_videomaster_get_audio_buffer_sdi(VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Returns SDI stream processing mode used when opening streams.
+ */
+uint32_t ff_videomaster_get_stream_proc_sdi(void);
+
+/**
+ * @brief Returns SDI video buffer type for slot extraction.
+ */
+uint32_t ff_videomaster_get_video_buffer_type_sdi(void);
+
+/**
+ * @brief Retrieves SDI/ASI video properties from channel/stream properties.
+ *
+ * @param avctx AVFormatContext for logging.
+ * @param board_handle Board handle.
+ * @param stream_handle Stream handle (optional).
+ * @param channel_index Channel index.
+ * @param video_info Returned SDI video info.
+ * @param width Returned active width.
+ * @param height Returned active height.
+ * @param frame_rate_num Returned frame-rate numerator.
+ * @param frame_rate_den Returned frame-rate denominator.
+ * @param interlaced Returned interlaced flag.
+ * @param dual_stream Whether dual-stream probing is allowed.
+ * @return 0 on success, negative AVERROR code on failure.
+ */
+int ff_videomaster_get_video_stream_properties_sdi(
+    AVFormatContext *avctx, HANDLE board_handle, HANDLE stream_handle,
+    uint32_t channel_index, union VideoMasterVideoInfo *video_info,
+    uint32_t *width, uint32_t *height, uint32_t *frame_rate_num,
+    uint32_t *frame_rate_den, bool *interlaced, bool dual_stream);
+
+/**
  * @brief Fills buf with an enriched description for a locked SDI/ASI channel.
  *
  * Uses properties already stored in videomaster_context (resolution,

@@ -98,8 +98,13 @@ bool ff_videomaster_is_channel_locked_ip(
  * @param videomaster_context The VideoMaster context.
  * @return "available" if free, "in use" if already locked by another app.
  */
-const char *ff_videomaster_get_channel_status_ip(
-    VideoMasterContext *videomaster_context);
+const char *
+ff_videomaster_get_channel_status_ip(VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Returns IP/ST2110 video buffer type for slot extraction.
+ */
+uint32_t ff_videomaster_get_video_buffer_type_ip();
 
 /**
  * @brief Prepares the IP board for main stream reception.
@@ -112,7 +117,20 @@ const char *ff_videomaster_get_channel_status_ip(
  * @param videomaster_context The VideoMaster context to use.
  * @return 0 on success, or negative AVERROR code on failure.
  */
-int ff_videomaster_prepare_ip_main_stream(
+int ff_videomaster_join_multicast_group(
+    VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Prepares the IP board for main stream reception.
+ *
+ * For IP ST2110 channels: leaves the multicast group on the main ethernet
+ * port (port 0) if ip_destination is a multicast address.
+ *
+ *
+ * @param videomaster_context The VideoMaster context to use.
+ * @return 0 on success, or negative AVERROR code on failure.
+ */
+int ff_videomaster_leave_multicast_group(
     VideoMasterContext *videomaster_context);
 
 /**

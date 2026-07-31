@@ -97,6 +97,8 @@ static int validate_video_arguments(VideoMasterData    *videomaster_data,
                                  "ip_video_bit_depth",
                                  ff_videomaster_channel_type_to_string(
                                      videomaster_context->channel_type));
+
+    return 0;
 }
 
 /**
@@ -124,6 +126,8 @@ static int validate_network_arguments(VideoMasterData    *videomaster_data,
                                  videomaster_data->ip_udp_port, "ip_udp_port",
                                  ff_videomaster_channel_type_to_string(
                                      videomaster_context->channel_type));
+
+    return 0;
 }
 
 /**
@@ -233,7 +237,7 @@ int ff_videomaster_check_channel_integrity_ip(
            videomaster_context->video_interlaced ? "interlaced"
                                                  : "progressive");
 
-    if (ff_videomaster_prepare_ip_main_stream(videomaster_context) != 0)
+    if (ff_videomaster_join_multicast_group(videomaster_context) != 0)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
                "Failed to prepare IP board for main stream.\n");
@@ -317,10 +321,14 @@ ff_videomaster_get_channel_status_ip(VideoMasterContext *videomaster_context)
     return "available"; /* if property cannot be read, assume free */
 }
 
+uint32_t ff_videomaster_get_video_buffer_type_ip()
+{
+    return VHD_ST2110_BT_VIDEO;
+}
+
 /* ---- Stream setup functions ---- */
 
-int ff_videomaster_prepare_ip_main_stream(
-    VideoMasterContext *videomaster_context)
+int ff_videomaster_join_multicast_group(VideoMasterContext *videomaster_context)
 {
     int av_error = 0;
 
@@ -347,6 +355,32 @@ int ff_videomaster_prepare_ip_main_stream(
                                          videomaster_context->ip_destination),
                   "Joined multicast group on main port",
                   "Failed to join multicast group on main port");
+
+    return 0;
+}
+
+int ff_videomaster_leave_multicast_group(
+    VideoMasterContext *videomaster_context)
+{
+    int av_error = 0;
+
+    if (!ip_is_multicast(videomaster_context->ip_destination))
+    {
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "Destination is unicast — no multicast leave needed.\n");
+        return 0;
+    }
+
+    av_log(videomaster_context->avctx, AV_LOG_TRACE,
+           "Destination is multicast — leaving group on main port (ETH_0).\n");
+
+    GET_AND_CHECK(ff_videomaster_handle_vhd_status, videomaster_context->avctx,
+                  videomaster_context->avctx,
+                  VHD_LeaveMulticastGroup(videomaster_context->board_handle,
+                                          VHD_IP_BRD_ETHERNETPORT_ETH_0,
+                                          videomaster_context->ip_destination),
+                  "Left multicast group on main port",
+                  "Failed to leave multicast group on main port");
 
     return 0;
 }

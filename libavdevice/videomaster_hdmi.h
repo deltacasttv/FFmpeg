@@ -88,6 +88,78 @@ void ff_videomaster_format_channel_description_hdmi(
     VideoMasterContext *videomaster_context, const char *board_name,
     const char *serial_number, char *buf, size_t buf_size);
 
+/**
+ * @brief Maps HDMI cable bit sampling to default logical buffer packing.
+ *
+ * @param cable_bit_sampling HDMI cable bit sampling value.
+ * @return Matching AVVideoMasterBufferPacking.
+ */
+enum AVVideoMasterBufferPacking
+ff_videomaster_get_buffer_packing_from_cable_bit_sampling_hdmi(
+    VHD_DV_SAMPLING cable_bit_sampling);
+
+/**
+ * @brief Retrieves HDMI audio properties from DV audio infoframe/AES status.
+ *
+ * @param avctx AVFormatContext for logging.
+ * @param board_handle Board handle.
+ * @param stream_handle Stream handle.
+ * @param channel_index Channel index.
+ * @param buffer_packing Selected buffer packing.
+ * @param audio_info Returned HDMI audio info.
+ * @param sample_rate Returned sample rate.
+ * @param nb_channels Returned number of channels.
+ * @param sample_size Returned sample size.
+ * @param codec Returned codec.
+ * @return 0 on success, negative AVERROR code on failure.
+ */
+int ff_videomaster_get_audio_stream_properties_from_audio_infoframe_hdmi(
+    AVFormatContext *avctx, HANDLE board_handle, HANDLE stream_handle,
+    uint32_t channel_index, enum AVVideoMasterBufferPacking buffer_packing,
+    union VideoMasterAudioInfo *audio_info, uint32_t *sample_rate,
+    uint32_t *nb_channels, uint32_t *sample_size, enum AVCodecID *codec);
+
+/**
+ * @brief Extracts HDMI audio payload from current slot into context buffer.
+ *
+ * @param videomaster_context VideoMaster context.
+ * @param channel_mask Audio channel mask to extract.
+ * @return 0 on success, negative AVERROR code on failure.
+ */
+int ff_videomaster_get_audio_buffer_hdmi(
+    VideoMasterContext *videomaster_context, int channel_mask);
+
+/**
+ * @brief Returns HDMI stream processing mode used when opening streams.
+ */
+uint32_t ff_videomaster_get_stream_proc_hdmi(void);
+
+/**
+ * @brief Returns HDMI video buffer type for slot extraction.
+ */
+uint32_t ff_videomaster_get_video_buffer_type_hdmi(void);
+
+/**
+ * @brief Retrieves HDMI video properties from channel/stream properties.
+ *
+ * @param avctx AVFormatContext for logging.
+ * @param board_handle Board handle.
+ * @param stream_handle Stream handle (optional).
+ * @param channel_index Channel index.
+ * @param video_info Returned HDMI video info.
+ * @param width Returned active width.
+ * @param height Returned active height.
+ * @param frame_rate_num Returned frame-rate numerator.
+ * @param frame_rate_den Returned frame-rate denominator.
+ * @param interlaced Returned interlaced flag.
+ * @return 0 on success, negative AVERROR code on failure.
+ */
+int ff_videomaster_get_video_stream_properties_hdmi(
+    AVFormatContext *avctx, HANDLE board_handle, HANDLE stream_handle,
+    uint32_t channel_index, union VideoMasterVideoInfo *video_info,
+    uint32_t *width, uint32_t *height, uint32_t *frame_rate_num,
+    uint32_t *frame_rate_den, bool *interlaced);
+
 /* ---- Stream setup ---- */
 
 /**
