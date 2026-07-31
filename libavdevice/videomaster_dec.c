@@ -675,6 +675,35 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
                 videomaster_data->ip_sps_udp_port > 0
                     ? (uint32_t)videomaster_data->ip_sps_udp_port
                     : 0;
+
+            if (videomaster_data->ip_source != NULL &&
+                parse_ipv4_address(videomaster_data->ip_source,
+                                   &videomaster_context->ip_source) < 0)
+            {
+                av_log(avctx, AV_LOG_ERROR,
+                       "Invalid IPv4 address for ip_source: %s\n",
+                       videomaster_data->ip_source);
+                return AVERROR(EINVAL);
+            }
+
+            if (videomaster_data->ip_sps_source != NULL &&
+                parse_ipv4_address(videomaster_data->ip_sps_source,
+                                   &videomaster_context->ip_sps_source) < 0)
+            {
+                av_log(avctx, AV_LOG_ERROR,
+                       "Invalid IPv4 address for ip_sps_source: %s\n",
+                       videomaster_data->ip_sps_source);
+                return AVERROR(EINVAL);
+            }
+
+            videomaster_context->ip_udp_port_src =
+                videomaster_data->ip_udp_port_src > 0
+                    ? (uint32_t)videomaster_data->ip_udp_port_src
+                    : 0;
+            videomaster_context->ip_sps_udp_port_src =
+                videomaster_data->ip_sps_udp_port_src > 0
+                    ? (uint32_t)videomaster_data->ip_sps_udp_port_src
+                    : 0;
             videomaster_context->ip_video_payload_type =
                 videomaster_data->ip_video_payload_type > 0
                     ? (uint32_t)videomaster_data->ip_video_payload_type
@@ -709,9 +738,13 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
     {
         av_log(avctx, AV_LOG_INFO,
                "IP 2110 explicit mode: destination=%s, udp_port=%u, "
+               "source=%s, udp_port_src=%u, "
                "payload_type=%u, video=%ux%u@%u/%u %s, depth=%s\n",
                videomaster_data->ip_destination,
                videomaster_context->ip_udp_port,
+               videomaster_data->ip_source ? videomaster_data->ip_source
+                                           : "any",
+               videomaster_context->ip_udp_port_src,
                videomaster_context->ip_video_payload_type,
                videomaster_context->video_width,
                videomaster_context->video_height,
@@ -722,6 +755,19 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
                videomaster_context->ip_video_depth == VHD_ST2110_20_DEPTH_10BIT
                    ? "10-bit"
                    : "8-bit");
+
+        if (videomaster_context->ip_sps_destination != 0)
+        {
+            av_log(avctx, AV_LOG_INFO,
+                   "IP 2110 SPS explicit mode: destination=%s, udp_port=%u, "
+                   "source=%s, udp_port_src=%u\n",
+                   videomaster_data->ip_sps_destination,
+                   videomaster_context->ip_sps_udp_port,
+                   videomaster_data->ip_sps_source
+                       ? videomaster_data->ip_sps_source
+                       : "any",
+                   videomaster_context->ip_sps_udp_port_src);
+        }
     }
 
     return 0;
@@ -1648,6 +1694,44 @@ static const AVOption options[] = {
     { "ip_sps_udp_port",
       "UDP SPS destination port for main ST2110 stream in explicit mode.",
       OFFSET(ip_sps_udp_port),
+      AV_OPT_TYPE_INT64,
+      { .i64 = -1 },
+      -1,
+      65535,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
+      NULL },
+    { "ip_source",
+      "IPv4 source address of the main ST2110 stream in explicit mode "
+      "(unicast RX source filtering). Optional.",
+      OFFSET(ip_source),
+      AV_OPT_TYPE_STRING,
+      { .str = NULL },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
+      NULL },
+    { "ip_sps_source",
+      "IPv4 source address of the SPS ST2110 stream in explicit mode "
+      "(unicast RX source filtering). Optional.",
+      OFFSET(ip_sps_source),
+      AV_OPT_TYPE_STRING,
+      { .str = NULL },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
+      NULL },
+    { "ip_udp_port_src",
+      "UDP source port of the main ST2110 stream in explicit mode. Optional.",
+      OFFSET(ip_udp_port_src),
+      AV_OPT_TYPE_INT64,
+      { .i64 = -1 },
+      -1,
+      65535,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
+      NULL },
+    { "ip_sps_udp_port_src",
+      "UDP source port of the SPS ST2110 stream in explicit mode. Optional.",
+      OFFSET(ip_sps_udp_port_src),
       AV_OPT_TYPE_INT64,
       { .i64 = -1 },
       -1,

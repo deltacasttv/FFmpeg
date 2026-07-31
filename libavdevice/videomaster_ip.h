@@ -137,9 +137,14 @@ int ff_videomaster_leave_multicast_group(
  * @brief Configures all ST2110-20 stream properties for explicit mode.
  *
  * Sets video standard, sampling, depth, SPS disabled, destination IP,
- * optional UDP port and payload type filtering, and fixed YUV 4:2:2 8-bit
- * buffer packing. Also sets video_codec, video_pixel_format and
+ * optional source IP (unicast RX filtering), optional UDP destination and
+ * source ports, optional RTP payload type filtering, and buffer packing
+ * determined by bit depth. Also sets video_codec, video_pixel_format and
  * video_bit_rate on the context. Does NOT call VHD_StartStream.
+ *
+ * For the SPS stream (when ip_sps_destination is set), also configures
+ * optional SPS source IP and SPS UDP source port, and sets the SPS RX
+ * filtering mask (VHD_ST2110_SP_SPS_FILTERING_MASK).
  *
  * Called from ff_videomaster_start_stream() in videomaster_common.c.
  *

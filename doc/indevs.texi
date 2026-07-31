@@ -1563,6 +1563,20 @@ UDP destination port of the main ST2110 stream in explicit mode.
 @item ip_sps_udp_port
 UDP destination port of the SPS ST2110 stream in explicit mode. Optional, but required if @code{ip_sps_destination} is set.
 
+@item ip_source
+IPv4 source address of the main ST2110 stream in explicit mode. Used for RX
+source IP filtering in unicast. Optional.
+
+@item ip_sps_source
+IPv4 source address of the SPS ST2110 stream in explicit mode. Used for RX
+source IP filtering in unicast. Optional.
+
+@item ip_udp_port_src
+UDP source port of the main ST2110 stream in explicit mode. Optional.
+
+@item ip_sps_udp_port_src
+UDP source port of the SPS ST2110 stream in explicit mode. Optional.
+
 @item ip_video_payload_type
 RTP video payload type of the main ST2110 stream in explicit mode. Optional. Default is 96.
 

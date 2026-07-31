@@ -444,8 +444,9 @@ int ff_videomaster_start_stream_ip_explicit(
     VideoMasterContext *videomaster_context)
 {
     int   av_error = 0;
-    ULONG ip_source = 0;
-    ULONG filtering_mask = VHD_IP_FILTER_IP_ADDR_DEST;
+    ULONG filtering_mask = VHD_IP_FILTER_IP_ADDR_DEST |
+                           VHD_IP_FILTER_UDP_PORT_DEST |
+                           VHD_IP_FILTER_RTP_PAYLOAD_TYPE;
 
     if (get_st2110_video_standard_from_explicit(
             videomaster_context, &videomaster_context->ip_video_standard) != 0)
@@ -510,9 +511,38 @@ int ff_videomaster_start_stream_ip_explicit(
                       "Failed to configure ST2110 UDP destination port");
     }
 
+    if (videomaster_context->ip_source != 0)
+    {
+        filtering_mask |= VHD_IP_FILTER_IP_ADDR_SRC;
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status,
+                      videomaster_context->avctx, videomaster_context->avctx,
+                      VHD_SetStreamProperty(videomaster_context->stream_handle,
+                                            VHD_ST2110_SP_IP_SRC,
+                                            videomaster_context->ip_source),
+                      "Configured ST2110 source IP",
+                      "Failed to configure ST2110 source IP");
+    }
+
+    if (videomaster_context->ip_udp_port_src > 0)
+    {
+        filtering_mask |= VHD_IP_FILTER_UDP_PORT_SRC;
+        GET_AND_CHECK(
+            ff_videomaster_handle_vhd_status, videomaster_context->avctx,
+            videomaster_context->avctx,
+            VHD_SetStreamProperty(videomaster_context->stream_handle,
+                                  VHD_ST2110_SP_UDP_PORT_SRC,
+                                  videomaster_context->ip_udp_port_src),
+            "Configured ST2110 UDP source port",
+            "Failed to configure ST2110 UDP source port");
+    }
+
     // if SPS IP destination is set, SPS must be enabled
     if (videomaster_context->ip_sps_destination != 0)
     {
+        ULONG sps_filtering_mask = VHD_IP_FILTER_IP_ADDR_DEST |
+                                   VHD_IP_FILTER_UDP_PORT_DEST |
+                                   VHD_IP_FILTER_RTP_PAYLOAD_TYPE;
+
         GET_AND_CHECK(
             ff_videomaster_handle_vhd_status, videomaster_context->avctx,
             videomaster_context->avctx,
@@ -534,6 +564,40 @@ int ff_videomaster_start_stream_ip_explicit(
             "Configured ST2110 SPS UDP destination port",
             "Failed to configure ST2110 SPS UDP destination port");
 
+        if (videomaster_context->ip_sps_source != 0)
+        {
+            sps_filtering_mask |= VHD_IP_FILTER_IP_ADDR_SRC;
+            GET_AND_CHECK(
+                ff_videomaster_handle_vhd_status, videomaster_context->avctx,
+                videomaster_context->avctx,
+                VHD_SetStreamProperty(videomaster_context->stream_handle,
+                                      VHD_ST2110_SP_SPS_IP_SRC,
+                                      videomaster_context->ip_sps_source),
+                "Configured ST2110 SPS source IP",
+                "Failed to configure ST2110 SPS source IP");
+        }
+
+        if (videomaster_context->ip_sps_udp_port_src > 0)
+        {
+            sps_filtering_mask |= VHD_IP_FILTER_UDP_PORT_SRC;
+            GET_AND_CHECK(
+                ff_videomaster_handle_vhd_status, videomaster_context->avctx,
+                videomaster_context->avctx,
+                VHD_SetStreamProperty(videomaster_context->stream_handle,
+                                      VHD_ST2110_SP_SPS_UDP_PORT_SRC,
+                                      videomaster_context->ip_sps_udp_port_src),
+                "Configured ST2110 SPS UDP source port",
+                "Failed to configure ST2110 SPS UDP source port");
+        }
+
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status,
+                      videomaster_context->avctx, videomaster_context->avctx,
+                      VHD_SetStreamProperty(videomaster_context->stream_handle,
+                                            VHD_ST2110_SP_SPS_FILTERING_MASK,
+                                            sps_filtering_mask),
+                      "Configured ST2110 SPS RX filtering mask",
+                      "Failed to configure ST2110 SPS RX filtering mask");
+
         // Enable SPS stream if SPS destination is set
         GET_AND_CHECK(ff_videomaster_handle_vhd_status,
                       videomaster_context->avctx, videomaster_context->avctx,
@@ -544,18 +608,15 @@ int ff_videomaster_start_stream_ip_explicit(
         av_log(videomaster_context->avctx, AV_LOG_INFO, "Enabled ST2110 SPS\n");
     }
 
-    if (videomaster_context->ip_video_payload_type > 0)
-    {
-        filtering_mask |= VHD_IP_FILTER_RTP_PAYLOAD_TYPE;
-        GET_AND_CHECK(
-            ff_videomaster_handle_vhd_status, videomaster_context->avctx,
-            videomaster_context->avctx,
-            VHD_SetStreamProperty(videomaster_context->stream_handle,
-                                  VHD_ST2110_SP_RTP_PAYLOAD_TYPE,
-                                  videomaster_context->ip_video_payload_type),
-            "Configured ST2110 RTP payload type",
-            "Failed to configure ST2110 RTP payload type");
-    }
+    // video payload type is always set (default value is 96)
+    GET_AND_CHECK(
+        ff_videomaster_handle_vhd_status, videomaster_context->avctx,
+        videomaster_context->avctx,
+        VHD_SetStreamProperty(videomaster_context->stream_handle,
+                              VHD_ST2110_SP_RTP_PAYLOAD_TYPE,
+                              videomaster_context->ip_video_payload_type),
+        "Configured ST2110 RTP payload type",
+        "Failed to configure ST2110 RTP payload type");
 
     GET_AND_CHECK(ff_videomaster_handle_vhd_status, videomaster_context->avctx,
                   videomaster_context->avctx,

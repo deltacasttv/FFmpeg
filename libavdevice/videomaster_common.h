@@ -278,6 +278,10 @@ typedef struct VideoMasterContext
     uint32_t                     ip_sps_destination;
     uint32_t                     ip_udp_port;
     uint32_t                     ip_sps_udp_port;
+    uint32_t                     ip_source;
+    uint32_t                     ip_sps_source;
+    uint32_t                     ip_udp_port_src;
+    uint32_t                     ip_sps_udp_port_src;
     uint32_t                     ip_video_payload_type;
     VHD_ST2110_20_VIDEO_STANDARD ip_video_standard;
     VHD_ST2110_20_DEPTH          ip_video_depth;
@@ -346,6 +350,10 @@ typedef struct VideoMasterData
     int64_t ip_udp_port;
     char   *ip_sps_destination;
     int64_t ip_sps_udp_port;
+    char   *ip_source;
+    char   *ip_sps_source;
+    int64_t ip_udp_port_src;
+    int64_t ip_sps_udp_port_src;
     int64_t ip_video_payload_type;
     int64_t ip_video_width;
     int64_t ip_video_height;
