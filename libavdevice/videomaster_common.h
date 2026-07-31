@@ -275,8 +275,10 @@ typedef struct VideoMasterContext
      * stream. SPS will use VHD_IP_BRD_ETHERNETPORT_ETH_1 when added.
      */
     uint32_t                     ip_destination;
+    uint32_t                     ip_sps_destination;
     uint32_t                     ip_udp_port;
-    uint32_t                     ip_payload_type;
+    uint32_t                     ip_sps_udp_port;
+    uint32_t                     ip_video_payload_type;
     VHD_ST2110_20_VIDEO_STANDARD ip_video_standard;
     VHD_ST2110_20_DEPTH          ip_video_depth;
 
@@ -342,7 +344,9 @@ typedef struct VideoMasterData
 
     char   *ip_destination;
     int64_t ip_udp_port;
-    int64_t ip_payload_type;
+    char   *ip_sps_destination;
+    int64_t ip_sps_udp_port;
+    int64_t ip_video_payload_type;
     int64_t ip_video_width;
     int64_t ip_video_height;
     int64_t ip_video_framerate_num;

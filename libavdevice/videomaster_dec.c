@@ -646,6 +646,17 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
                 return AVERROR(EINVAL);
             }
 
+            if (videomaster_data->ip_sps_destination != NULL &&
+                parse_ipv4_address(videomaster_data->ip_sps_destination,
+                                   &videomaster_context->ip_sps_destination) <
+                    0)
+            {
+                av_log(avctx, AV_LOG_ERROR,
+                       "Invalid IPv4 address for ip_sps_destination: %s\n",
+                       videomaster_data->ip_sps_destination);
+                return AVERROR(EINVAL);
+            }
+
             if (videomaster_data->ip_video_bit_depth != 8 &&
                 videomaster_data->ip_video_bit_depth != 10)
             {
@@ -660,9 +671,13 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
                 videomaster_data->ip_udp_port > 0
                     ? (uint32_t)videomaster_data->ip_udp_port
                     : 0;
-            videomaster_context->ip_payload_type =
-                videomaster_data->ip_payload_type > 0
-                    ? (uint32_t)videomaster_data->ip_payload_type
+            videomaster_context->ip_sps_udp_port =
+                videomaster_data->ip_sps_udp_port > 0
+                    ? (uint32_t)videomaster_data->ip_sps_udp_port
+                    : 0;
+            videomaster_context->ip_video_payload_type =
+                videomaster_data->ip_video_payload_type > 0
+                    ? (uint32_t)videomaster_data->ip_video_payload_type
                     : 0;
             videomaster_context->video_width =
                 (uint32_t)videomaster_data->ip_video_width;
@@ -697,7 +712,7 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
                "payload_type=%u, video=%ux%u@%u/%u %s, depth=%s\n",
                videomaster_data->ip_destination,
                videomaster_context->ip_udp_port,
-               videomaster_context->ip_payload_type,
+               videomaster_context->ip_video_payload_type,
                videomaster_context->video_width,
                videomaster_context->video_height,
                videomaster_context->video_frame_rate_num,
@@ -1612,6 +1627,15 @@ static const AVOption options[] = {
       0,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
+    { "ip_sps_destination",
+      "IPv4 SPS destination address for main ST2110 stream in explicit mode.",
+      OFFSET(ip_sps_destination),
+      AV_OPT_TYPE_STRING,
+      { .str = NULL },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
+      NULL },
     { "ip_udp_port",
       "UDP destination port for main ST2110 stream in explicit mode.",
       OFFSET(ip_udp_port),
@@ -1621,9 +1645,18 @@ static const AVOption options[] = {
       65535,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
-    { "ip_payload_type",
-      "RTP payload type for main ST2110 stream in explicit mode.",
-      OFFSET(ip_payload_type),
+    { "ip_sps_udp_port",
+      "UDP SPS destination port for main ST2110 stream in explicit mode.",
+      OFFSET(ip_sps_udp_port),
+      AV_OPT_TYPE_INT64,
+      { .i64 = -1 },
+      -1,
+      65535,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
+      NULL },
+    { "ip_video_payload_type",
+      "RTP video payload type for ST2110 stream in explicit mode.",
+      OFFSET(ip_video_payload_type),
       AV_OPT_TYPE_INT64,
       { .i64 = 96 },
       0,
@@ -1631,7 +1664,7 @@ static const AVOption options[] = {
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
     { "ip_video_width",
-      "Video width for explicit ST2110 stream mode.",
+      "Video width for ST2110 stream in explicit mode.",
       OFFSET(ip_video_width),
       AV_OPT_TYPE_INT64,
       { .i64 = -1 },
@@ -1640,7 +1673,7 @@ static const AVOption options[] = {
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
     { "ip_video_height",
-      "Video height for explicit ST2110 stream mode.",
+      "Video height for ST2110 stream in explicit mode.",
       OFFSET(ip_video_height),
       AV_OPT_TYPE_INT64,
       { .i64 = -1 },
@@ -1649,7 +1682,7 @@ static const AVOption options[] = {
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
     { "ip_video_framerate_num",
-      "Video framerate numerator for explicit ST2110 stream mode.",
+      "Video framerate numerator for ST2110 stream in explicit mode.",
       OFFSET(ip_video_framerate_num),
       AV_OPT_TYPE_INT64,
       { .i64 = -1 },
@@ -1658,7 +1691,7 @@ static const AVOption options[] = {
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
     { "ip_video_framerate_den",
-      "Video framerate denominator for explicit ST2110 stream mode.",
+      "Video framerate denominator for ST2110 stream in explicit mode.",
       OFFSET(ip_video_framerate_den),
       AV_OPT_TYPE_INT64,
       { .i64 = -1 },
@@ -1667,7 +1700,7 @@ static const AVOption options[] = {
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
     { "ip_video_interlaced",
-      "Interlaced flag for explicit ST2110 stream mode (0 progressive, 1 "
+      "Interlaced flag for ST2110 stream in explicit mode (0 progressive, 1 "
       "interlaced).",
       OFFSET(ip_video_interlaced),
       AV_OPT_TYPE_INT64,
@@ -1677,7 +1710,7 @@ static const AVOption options[] = {
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
     { "ip_video_bit_depth",
-      "Bit depth for explicit ST2110 stream mode (8 or 10).",
+      "Bit depth for ST2110 stream in explicit mode (8 or 10).",
       OFFSET(ip_video_bit_depth),
       AV_OPT_TYPE_INT64,
       { .i64 = -1 },

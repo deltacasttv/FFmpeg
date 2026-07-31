@@ -127,6 +127,28 @@ static int validate_network_arguments(VideoMasterData    *videomaster_data,
                                  ff_videomaster_channel_type_to_string(
                                      videomaster_context->channel_type));
 
+    if (videomaster_data->ip_sps_destination != NULL &&
+        videomaster_data->ip_sps_udp_port < 0)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Argument ip_sps_udp_port is required for %s channels when "
+               "ip_sps_destination is set.\n",
+               ff_videomaster_channel_type_to_string(
+                   videomaster_context->channel_type));
+        return AVERROR(EINVAL);
+    }
+
+    if (videomaster_data->ip_sps_udp_port > 0 &&
+        videomaster_data->ip_sps_destination == NULL)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Argument ip_sps_destination is required for %s channels when "
+               "ip_sps_udp_port is set.\n",
+               ff_videomaster_channel_type_to_string(
+                   videomaster_context->channel_type));
+        return AVERROR(EINVAL);
+    }
+
     return 0;
 }
 
@@ -356,6 +378,23 @@ int ff_videomaster_join_multicast_group(VideoMasterContext *videomaster_context)
                   "Joined multicast group on main port",
                   "Failed to join multicast group on main port");
 
+    if (videomaster_context->ip_sps_destination != 0 &&
+        ip_is_multicast(videomaster_context->ip_sps_destination))
+    {
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "SPS destination is multicast — joining group on secondary port "
+               "(ETH_1).\n");
+
+        GET_AND_CHECK(
+            ff_videomaster_handle_vhd_status, videomaster_context->avctx,
+            videomaster_context->avctx,
+            VHD_JoinMulticastGroup(videomaster_context->board_handle,
+                                   VHD_IP_BRD_ETHERNETPORT_ETH_1,
+                                   videomaster_context->ip_sps_destination),
+            "Joined SPS multicast group on secondary port",
+            "Failed to join SPS multicast group on secondary port");
+    }
+
     return 0;
 }
 
@@ -381,6 +420,22 @@ int ff_videomaster_leave_multicast_group(
                                           videomaster_context->ip_destination),
                   "Left multicast group on main port",
                   "Failed to leave multicast group on main port");
+
+    if (videomaster_context->ip_sps_destination != 0 &&
+        ip_is_multicast(videomaster_context->ip_sps_destination))
+    {
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "SPS destination is multicast — leaving group on secondary port "
+               "(ETH_1).\n");
+        GET_AND_CHECK(
+            ff_videomaster_handle_vhd_status, videomaster_context->avctx,
+            videomaster_context->avctx,
+            VHD_LeaveMulticastGroup(videomaster_context->board_handle,
+                                    VHD_IP_BRD_ETHERNETPORT_ETH_1,
+                                    videomaster_context->ip_sps_destination),
+            "Left SPS multicast group on secondary port",
+            "Failed to leave SPS multicast group on secondary port");
+    }
 
     return 0;
 }
@@ -443,30 +498,6 @@ int ff_videomaster_start_stream_ip_explicit(
                   "Configured ST2110 destination IP",
                   "Failed to configure ST2110 destination IP");
 
-    /* Read source IP from main port (ETH_0) and bind it to the stream. */
-    if (ff_videomaster_handle_vhd_status(
-            videomaster_context->avctx,
-            VHD_GetEthernetPortProperty(videomaster_context->board_handle,
-                                        VHD_IP_BRD_ETHERNETPORT_ETH_0,
-                                        VHD_IP_BRD_EP_IP_ADDR, &ip_source),
-            "Read source IPv4 from main port",
-            "Failed to read source IPv4 from main port") == 0 &&
-        ip_source != 0)
-    {
-        GET_AND_CHECK(ff_videomaster_handle_vhd_status,
-                      videomaster_context->avctx, videomaster_context->avctx,
-                      VHD_SetStreamProperty(videomaster_context->stream_handle,
-                                            VHD_ST2110_SP_IP_SRC, ip_source),
-                      "Configured ST2110 source IP",
-                      "Failed to configure ST2110 source IP");
-    }
-    else if (ip_source == 0)
-    {
-        av_log(videomaster_context->avctx, AV_LOG_WARNING,
-               "Main ethernet port has no IPv4 address set. "
-               "Source IP will not be configured on stream.\n");
-    }
-
     if (videomaster_context->ip_udp_port > 0)
     {
         filtering_mask |= VHD_IP_FILTER_UDP_PORT_DEST;
@@ -479,7 +510,41 @@ int ff_videomaster_start_stream_ip_explicit(
                       "Failed to configure ST2110 UDP destination port");
     }
 
-    if (videomaster_context->ip_payload_type > 0)
+    // if SPS IP destination is set, SPS must be enabled
+    if (videomaster_context->ip_sps_destination != 0)
+    {
+        GET_AND_CHECK(
+            ff_videomaster_handle_vhd_status, videomaster_context->avctx,
+            videomaster_context->avctx,
+            VHD_SetStreamProperty(videomaster_context->stream_handle,
+                                  VHD_ST2110_SP_SPS_IP_DST,
+                                  videomaster_context->ip_sps_destination),
+            "Configured ST2110 SPS destination IP",
+            "Failed to configure ST2110 SPS destination IP");
+
+        // No need to check if SPS UDP port is set, because if SPS IP
+        // destination is set, SPS UDP port must be set as well (see
+        // validate_network_arguments)
+        GET_AND_CHECK(
+            ff_videomaster_handle_vhd_status, videomaster_context->avctx,
+            videomaster_context->avctx,
+            VHD_SetStreamProperty(videomaster_context->stream_handle,
+                                  VHD_ST2110_SP_SPS_UDP_PORT_DST,
+                                  videomaster_context->ip_sps_udp_port),
+            "Configured ST2110 SPS UDP destination port",
+            "Failed to configure ST2110 SPS UDP destination port");
+
+        // Enable SPS stream if SPS destination is set
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status,
+                      videomaster_context->avctx, videomaster_context->avctx,
+                      VHD_SetStreamProperty(videomaster_context->stream_handle,
+                                            VHD_ST2110_SP_SPS_ENABLED, TRUE),
+                      "Enabled ST2110 SPS", "Failed to enable ST2110 SPS");
+
+        av_log(videomaster_context->avctx, AV_LOG_INFO, "Enabled ST2110 SPS\n");
+    }
+
+    if (videomaster_context->ip_video_payload_type > 0)
     {
         filtering_mask |= VHD_IP_FILTER_RTP_PAYLOAD_TYPE;
         GET_AND_CHECK(
@@ -487,7 +552,7 @@ int ff_videomaster_start_stream_ip_explicit(
             videomaster_context->avctx,
             VHD_SetStreamProperty(videomaster_context->stream_handle,
                                   VHD_ST2110_SP_RTP_PAYLOAD_TYPE,
-                                  videomaster_context->ip_payload_type),
+                                  videomaster_context->ip_video_payload_type),
             "Configured ST2110 RTP payload type",
             "Failed to configure ST2110 RTP payload type");
     }

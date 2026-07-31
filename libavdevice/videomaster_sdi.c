@@ -118,13 +118,13 @@ int ff_videomaster_validate_arguments_sdi(
     /* IP arguments must not be specified for SDI */
     if (videomaster_data->ip_destination != NULL ||
         videomaster_data->ip_udp_port > 0 ||
-        videomaster_data->ip_payload_type > 0 ||
+        videomaster_data->ip_video_payload_type > 0 ||
         videomaster_data->ip_video_width > 0 ||
         videomaster_data->ip_video_height > 0)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
                "IP-specific arguments (ip_destination, ip_udp_port, "
-               "ip_payload_type, ip_video_*) are not applicable for SDI "
+               "ip_video_payload_type, ip_video_*) are not applicable for SDI "
                "channels.\n");
         return AVERROR(EINVAL);
     }
