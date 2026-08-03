@@ -1599,6 +1599,20 @@ Interlaced flag for explicit ST2110 stream mode: @option{0} for progressive,
 @item ip_video_bit_depth
 Bit depth for explicit ST2110 stream mode: @option{8} or @option{10}.
 
+@item ip_sdp_file
+Path to an SDP file (RFC 4566 / SMPTE ST 2110) describing the ST2110-20
+video stream to receive. The SDP must contain exactly one main ST2110-20
+media entry, and optionally a second entry for the SPS (Seamless Protection
+Switching) sub-stream. More than two media entries, or media types other than
+ST2110-20, are rejected as non-compliant.
+
+This option is @emph{mutually exclusive} with @code{ip_destination} and all
+@code{ip_video_*} options. Use either SDP mode or explicit mode, never both.
+
+In SDP mode, source-specific multicast (SSM) filtering expressed via the
+@code{a=source-filter} SDP attribute is applied automatically. Only IPv4
+destinations are supported.
+
 @end table
 
 @subsection Examples
@@ -1643,6 +1657,14 @@ ffmpeg -f videomaster -i dummy -board_index 0 -channel_index 0 @\
     -ip_video_width 1920 -ip_video_height 1080 @\
     -ip_video_framerate_num 60000 -ip_video_framerate_den 1001 @\
     -ip_video_interlaced 0 -ip_video_bit_depth 10 @\
+    -c:v copy output.avi
+@end example
+
+@item
+Capture a ST2110-20 video stream from an SDP file (SDP mode)
+@example
+ffmpeg -f videomaster -i dummy -board_index 0 -channel_index 0 @\
+    -ip_sdp_file /path/to/stream.sdp @\
     -c:v copy output.avi
 @end example
 

@@ -9,6 +9,7 @@
 #include "libavutil/dynarray.h"
 #include "libavutil/internal.h"
 #include "libavutil/log.h"
+#include "libavutil/mathematics.h"
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/time.h"
@@ -199,6 +200,28 @@ static int setup_streams(VideoMasterContext *videomaster_context);
  * code on failure
  */
 static int setup_video_stream(VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Reorders a field-sequential frame into line-interleaved layout.
+ *
+ * Input layout: all top-field lines first, then all bottom-field lines.
+ * Output layout: alternating lines (top0, bottom0, top1, bottom1, ...).
+ */
+static void interleave_sequential_fields(const VideoMasterContext *ctx,
+                                         uint8_t                  *dst,
+                                         const uint8_t            *src)
+{
+    uint32_t height = ctx->video_height;
+    uint32_t stride = ctx->video_buffer_size / height;
+    const uint8_t *top = src;
+    const uint8_t *bottom = src + (height / 2) * stride;
+
+    for (uint32_t i = 0; i < height / 2; i++)
+    {
+        memcpy(dst + (2 * i) * stride, top + i * stride, stride);
+        memcpy(dst + (2 * i + 1) * stride, bottom + i * stride, stride);
+    }
+}
 
 /**** Static functions definitions */
 static int check_audio_properties(VideoMasterContext *videomaster_context)
@@ -628,100 +651,120 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
             videomaster_data->buffer_packing;
         videomaster_context->dual_stream = videomaster_data->dual_stream;
 
-        /* Configure IP parameters if all required fields are provided */
-        if (videomaster_data->ip_video_width > 0 &&
-            videomaster_data->ip_video_height > 0 &&
-            videomaster_data->ip_video_framerate_num > 0 &&
-            videomaster_data->ip_video_framerate_den > 0 &&
-            videomaster_data->ip_video_interlaced >= 0 &&
-            videomaster_data->ip_video_bit_depth > 0 &&
-            videomaster_data->ip_destination != NULL)
+        /* SDP mode and explicit mode are mutually exclusive. */
         {
-            if (parse_ipv4_address(videomaster_data->ip_destination,
-                                   &videomaster_context->ip_destination) < 0)
+            bool has_sdp = videomaster_data->ip_sdp_file != NULL;
+            bool has_explicit = videomaster_data->ip_destination != NULL;
+
+            if (has_sdp && has_explicit)
             {
                 av_log(avctx, AV_LOG_ERROR,
-                       "Invalid IPv4 address for ip_destination: %s\n",
-                       videomaster_data->ip_destination);
+                       "ip_sdp_file and ip_destination are mutually "
+                       "exclusive.\n");
                 return AVERROR(EINVAL);
             }
 
-            if (videomaster_data->ip_sps_destination != NULL &&
-                parse_ipv4_address(videomaster_data->ip_sps_destination,
-                                   &videomaster_context->ip_sps_destination) <
+            if (has_sdp)
+            {
+                int ret = ff_videomaster_parse_sdp_file(videomaster_data,
+                                                        videomaster_context);
+                if (ret < 0)
+                    return ret;
+            }
+            else if (has_explicit && videomaster_data->ip_video_width > 0 &&
+                     videomaster_data->ip_video_height > 0 &&
+                     videomaster_data->ip_video_framerate_num > 0 &&
+                     videomaster_data->ip_video_framerate_den > 0 &&
+                     videomaster_data->ip_video_interlaced >= 0 &&
+                     videomaster_data->ip_video_bit_depth > 0)
+            {
+                if (parse_ipv4_address(videomaster_data->ip_destination,
+                                       &videomaster_context->ip_destination) <
                     0)
-            {
-                av_log(avctx, AV_LOG_ERROR,
-                       "Invalid IPv4 address for ip_sps_destination: %s\n",
-                       videomaster_data->ip_sps_destination);
-                return AVERROR(EINVAL);
+                {
+                    av_log(avctx, AV_LOG_ERROR,
+                           "Invalid IPv4 address for ip_destination: %s\n",
+                           videomaster_data->ip_destination);
+                    return AVERROR(EINVAL);
+                }
+
+                if (videomaster_data->ip_sps_destination != NULL &&
+                    parse_ipv4_address(
+                        videomaster_data->ip_sps_destination,
+                        &videomaster_context->ip_sps_destination) < 0)
+                {
+                    av_log(avctx, AV_LOG_ERROR,
+                           "Invalid IPv4 address for ip_sps_destination: %s\n",
+                           videomaster_data->ip_sps_destination);
+                    return AVERROR(EINVAL);
+                }
+
+                if (videomaster_data->ip_video_bit_depth != 8 &&
+                    videomaster_data->ip_video_bit_depth != 10)
+                {
+                    av_log(avctx, AV_LOG_ERROR,
+                           "Invalid ip_video_bit_depth value: %" PRId64
+                           " (expected 8 or 10)\n",
+                           videomaster_data->ip_video_bit_depth);
+                    return AVERROR(EINVAL);
+                }
+
+                videomaster_context->ip_udp_port =
+                    videomaster_data->ip_udp_port > 0
+                        ? (uint32_t)videomaster_data->ip_udp_port
+                        : 0;
+                videomaster_context->ip_sps_udp_port =
+                    videomaster_data->ip_sps_udp_port > 0
+                        ? (uint32_t)videomaster_data->ip_sps_udp_port
+                        : 0;
+
+                if (videomaster_data->ip_source != NULL &&
+                    parse_ipv4_address(videomaster_data->ip_source,
+                                       &videomaster_context->ip_source) < 0)
+                {
+                    av_log(avctx, AV_LOG_ERROR,
+                           "Invalid IPv4 address for ip_source: %s\n",
+                           videomaster_data->ip_source);
+                    return AVERROR(EINVAL);
+                }
+
+                if (videomaster_data->ip_sps_source != NULL &&
+                    parse_ipv4_address(videomaster_data->ip_sps_source,
+                                       &videomaster_context->ip_sps_source) < 0)
+                {
+                    av_log(avctx, AV_LOG_ERROR,
+                           "Invalid IPv4 address for ip_sps_source: %s\n",
+                           videomaster_data->ip_sps_source);
+                    return AVERROR(EINVAL);
+                }
+
+                videomaster_context->ip_udp_port_src =
+                    videomaster_data->ip_udp_port_src > 0
+                        ? (uint32_t)videomaster_data->ip_udp_port_src
+                        : 0;
+                videomaster_context->ip_sps_udp_port_src =
+                    videomaster_data->ip_sps_udp_port_src > 0
+                        ? (uint32_t)videomaster_data->ip_sps_udp_port_src
+                        : 0;
+                videomaster_context->ip_video_payload_type =
+                    videomaster_data->ip_video_payload_type > 0
+                        ? (uint32_t)videomaster_data->ip_video_payload_type
+                        : 0;
+                videomaster_context->video_width =
+                    (uint32_t)videomaster_data->ip_video_width;
+                videomaster_context->video_height =
+                    (uint32_t)videomaster_data->ip_video_height;
+                videomaster_context->video_frame_rate_num =
+                    (uint32_t)videomaster_data->ip_video_framerate_num;
+                videomaster_context->video_frame_rate_den =
+                    (uint32_t)videomaster_data->ip_video_framerate_den;
+                videomaster_context->video_interlaced =
+                    !!videomaster_data->ip_video_interlaced;
+                videomaster_context->ip_video_depth =
+                    videomaster_data->ip_video_bit_depth == 10
+                        ? VHD_ST2110_20_DEPTH_10BIT
+                        : VHD_ST2110_20_DEPTH_8BIT;
             }
-
-            if (videomaster_data->ip_video_bit_depth != 8 &&
-                videomaster_data->ip_video_bit_depth != 10)
-            {
-                av_log(avctx, AV_LOG_ERROR,
-                       "Invalid ip_video_bit_depth value: %" PRId64
-                       " (expected 8 or 10)\n",
-                       videomaster_data->ip_video_bit_depth);
-                return AVERROR(EINVAL);
-            }
-
-            videomaster_context->ip_udp_port =
-                videomaster_data->ip_udp_port > 0
-                    ? (uint32_t)videomaster_data->ip_udp_port
-                    : 0;
-            videomaster_context->ip_sps_udp_port =
-                videomaster_data->ip_sps_udp_port > 0
-                    ? (uint32_t)videomaster_data->ip_sps_udp_port
-                    : 0;
-
-            if (videomaster_data->ip_source != NULL &&
-                parse_ipv4_address(videomaster_data->ip_source,
-                                   &videomaster_context->ip_source) < 0)
-            {
-                av_log(avctx, AV_LOG_ERROR,
-                       "Invalid IPv4 address for ip_source: %s\n",
-                       videomaster_data->ip_source);
-                return AVERROR(EINVAL);
-            }
-
-            if (videomaster_data->ip_sps_source != NULL &&
-                parse_ipv4_address(videomaster_data->ip_sps_source,
-                                   &videomaster_context->ip_sps_source) < 0)
-            {
-                av_log(avctx, AV_LOG_ERROR,
-                       "Invalid IPv4 address for ip_sps_source: %s\n",
-                       videomaster_data->ip_sps_source);
-                return AVERROR(EINVAL);
-            }
-
-            videomaster_context->ip_udp_port_src =
-                videomaster_data->ip_udp_port_src > 0
-                    ? (uint32_t)videomaster_data->ip_udp_port_src
-                    : 0;
-            videomaster_context->ip_sps_udp_port_src =
-                videomaster_data->ip_sps_udp_port_src > 0
-                    ? (uint32_t)videomaster_data->ip_sps_udp_port_src
-                    : 0;
-            videomaster_context->ip_video_payload_type =
-                videomaster_data->ip_video_payload_type > 0
-                    ? (uint32_t)videomaster_data->ip_video_payload_type
-                    : 0;
-            videomaster_context->video_width =
-                (uint32_t)videomaster_data->ip_video_width;
-            videomaster_context->video_height =
-                (uint32_t)videomaster_data->ip_video_height;
-            videomaster_context->video_frame_rate_num =
-                (uint32_t)videomaster_data->ip_video_framerate_num;
-            videomaster_context->video_frame_rate_den =
-                (uint32_t)videomaster_data->ip_video_framerate_den;
-            videomaster_context->video_interlaced =
-                !!videomaster_data->ip_video_interlaced;
-            videomaster_context->ip_video_depth =
-                videomaster_data->ip_video_bit_depth == 10
-                    ? VHD_ST2110_20_DEPTH_10BIT
-                    : VHD_ST2110_20_DEPTH_8BIT;
         }
     }
 
@@ -734,7 +777,8 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
            VHD_BUFFERPACKING_ToPrettyString(
                videomaster_context->video_buffer_packing));
 
-    if (videomaster_context->ip_destination != 0)
+    if (videomaster_context->ip_destination != 0 &&
+        !videomaster_context->ip_sdp_mode)
     {
         av_log(avctx, AV_LOG_INFO,
                "IP 2110 explicit mode: destination=%s, udp_port=%u, "
@@ -768,6 +812,30 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
                        : "any",
                    videomaster_context->ip_sps_udp_port_src);
         }
+    }
+    else if (videomaster_context->ip_sdp_mode)
+    {
+        av_log(avctx, AV_LOG_INFO,
+               "IP 2110 SDP mode: file=%s, "
+               "video=%ux%u@%u/%u %s, depth=%s, "
+               "main dst=%u.%u.%u.%u:%u pt=%u%s\n",
+               videomaster_data->ip_sdp_file, videomaster_context->video_width,
+               videomaster_context->video_height,
+               videomaster_context->video_frame_rate_num,
+               videomaster_context->video_frame_rate_den,
+               videomaster_context->video_interlaced ? "interlaced"
+                                                     : "progressive",
+               videomaster_context->ip_video_depth == VHD_ST2110_20_DEPTH_10BIT
+                   ? "10-bit"
+                   : "8-bit",
+               (videomaster_context->ip_destination >> 24) & 0xFF,
+               (videomaster_context->ip_destination >> 16) & 0xFF,
+               (videomaster_context->ip_destination >> 8) & 0xFF,
+               videomaster_context->ip_destination & 0xFF,
+               videomaster_context->ip_udp_port,
+               videomaster_context->ip_video_payload_type,
+               videomaster_context->ip_sdp_media_count > 1 ? " (SPS present)"
+                                                           : "");
     }
 
     return 0;
@@ -858,7 +926,9 @@ static int setup_video_stream(VideoMasterContext *videomaster_context)
         av_stream->codecpar->bit_rate = videomaster_context->video_bit_rate;
         av_stream->codecpar->codec_id = videomaster_context->video_codec;
         av_stream->codecpar->format = videomaster_context->video_pixel_format;
-        av_stream->codecpar->field_order = AV_FIELD_PROGRESSIVE;
+        av_stream->codecpar->field_order = videomaster_context->video_interlaced
+                               ? AV_FIELD_TT
+                               : AV_FIELD_PROGRESSIVE;
 
         /* Broadcast content is always limited (studio swing) range. */
         av_stream->codecpar->color_range = AVCOL_RANGE_MPEG;
@@ -1083,14 +1153,34 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
             }
             else
             {
-                memcpy(pkt->data, videomaster_context->video_buffer,
-                       videomaster_context->video_buffer_size);
+                if (videomaster_context->video_needs_field_reorder &&
+                    videomaster_context->video_height > 0 &&
+                    (videomaster_context->video_height % 2) == 0 &&
+                    (videomaster_context->video_buffer_size %
+                         videomaster_context->video_height) ==
+                        0)
+                    interleave_sequential_fields(videomaster_context,
+                                                 pkt->data,
+                                                 videomaster_context->video_buffer);
+                else
+                    memcpy(pkt->data, videomaster_context->video_buffer,
+                           videomaster_context->video_buffer_size);
                 pkt->stream_index = videomaster_context->video_stream->index;
                 ff_videomaster_get_timestamp(videomaster_context,
                                              &videomaster_context->pts);
                 pkt->pts = videomaster_context->pts;
                 pkt->dts = pkt->pts;
-                pkt->duration = 1;
+                if (videomaster_context->video_frame_rate_num > 0)
+                {
+                    pkt->duration = av_rescale(
+                        (int64_t)videomaster_context->video_frame_rate_den *
+                            1000000,
+                        1, videomaster_context->video_frame_rate_num);
+                    if (pkt->duration <= 0)
+                        pkt->duration = 1;
+                }
+                else
+                    pkt->duration = 1;
             }
 
             if (ff_videomaster_get_slots_counter(videomaster_context) != 0)
@@ -1123,12 +1213,31 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
                 memcpy(pkt->data, videomaster_context->audio_buffer,
                        videomaster_context->audio_buffer_size);
                 pkt->stream_index = videomaster_context->audio_stream->index;
-                // Assign audio PTS as video PTS + 1 to ensure monotonic packet
-                // timestamps across all streams, as required by some FFmpeg
-                // muxers and filters.
-                pkt->pts = videomaster_context->pts + 1;
+                pkt->pts = videomaster_context->pts;
                 pkt->dts = pkt->pts;
-                pkt->duration = 1;
+                if (videomaster_context->audio_nb_channels > 0 &&
+                    videomaster_context->audio_sample_size > 0 &&
+                    videomaster_context->audio_sample_rate > 0)
+                {
+                    int bytes_per_sample =
+                        (videomaster_context->audio_sample_size + 7) / 8;
+                    int bytes_per_audio_frame =
+                        bytes_per_sample * videomaster_context->audio_nb_channels;
+                    if (bytes_per_audio_frame > 0)
+                    {
+                        int64_t sample_count =
+                            videomaster_context->audio_buffer_size /
+                            bytes_per_audio_frame;
+                        pkt->duration = av_rescale(sample_count, 1000000,
+                                                   videomaster_context->audio_sample_rate);
+                        if (pkt->duration <= 0)
+                            pkt->duration = 1;
+                    }
+                    else
+                        pkt->duration = 1;
+                }
+                else
+                    pkt->duration = 1;
             }
             videomaster_context->audio_frames_received +=
                 videomaster_context->audio_buffer_size;
@@ -1800,6 +1909,17 @@ static const AVOption options[] = {
       { .i64 = -1 },
       -1,
       10,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
+      NULL },
+    { "ip_sdp_file",
+      "Path to an SDP file describing the ST2110-20 stream (main and optional "
+      "SPS). Mutually exclusive with ip_destination and all ip_video_* "
+      "options.",
+      OFFSET(ip_sdp_file),
+      AV_OPT_TYPE_STRING,
+      { .str = NULL },
+      0,
+      0,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
     { NULL },

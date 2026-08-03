@@ -629,27 +629,44 @@ static int enable_loopback_on_channel(VideoMasterContext *videomaster_context)
 
 static int setup_field_merge(VideoMasterContext *videomaster_context)
 {
+    int av_error = 0;
     int has_field_merge_capability = 0;
 
     if (!videomaster_context->video_interlaced)
+    {
+        videomaster_context->video_needs_field_reorder = false;
         return 0;
+    }
 
-    ff_videomaster_handle_vhd_status(
-        videomaster_context->avctx,
-        VHD_GetBoardCapability(videomaster_context->board_handle,
-                               VHD_CORE_BOARD_CAP_FIELD_MERGING,
-                               &has_field_merge_capability),
-        "", "");
+    videomaster_context->video_needs_field_reorder = false;
+
+    GET_AND_CHECK(ff_videomaster_handle_vhd_status, videomaster_context->avctx,
+                  videomaster_context->avctx,
+                  VHD_GetBoardCapability(videomaster_context->board_handle,
+                                         VHD_CORE_BOARD_CAP_FIELD_MERGING,
+                                         &has_field_merge_capability),
+                  "", "");
     if (has_field_merge_capability)
-        ff_videomaster_handle_vhd_status(
+    {
+        GET_AND_CHECK(
+            ff_videomaster_handle_vhd_status, videomaster_context->avctx,
             videomaster_context->avctx,
             VHD_SetStreamProperty(videomaster_context->stream_handle,
                                   VHD_CORE_SP_FIELD_MERGE, true),
             "", "Unable to set field merge property for interlaced stream");
+    }
     else
+    {
+        /* Keep frame-mode output for FFmpeg interlaced semantics. Some
+         * configurations expose fields as top-half then bottom-half in the
+         * frame buffer; mark this case for packet-time reordering. */
+        if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_IP_2110)
+            videomaster_context->video_needs_field_reorder = true;
+
         av_log(videomaster_context->avctx, AV_LOG_WARNING,
-               "Field merge not supported on this board, interlaced "
-               "content might be affected\n");
+               "Field merge unavailable. Keeping frame mode; interlaced "
+               "buffers will be reordered to line-interleaved layout.\n");
+    }
     return 0;
 }
 
@@ -1963,9 +1980,12 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
         return av_error;
 
     /* 2. Common setup: applies to all technologies */
-    disable_loopback_on_channel(videomaster_context);
-    setup_field_merge(videomaster_context);
-    setup_transfer_scheme(videomaster_context);
+    GET_AND_CHECK(disable_loopback_on_channel, videomaster_context->avctx,
+                  videomaster_context);
+    GET_AND_CHECK(setup_field_merge, videomaster_context->avctx,
+                  videomaster_context);
+    GET_AND_CHECK(setup_transfer_scheme, videomaster_context->avctx,
+                  videomaster_context);
 
     /* IP buffer packing, codec and pixel format are already configured in
      * ff_videomaster_start_stream_ip_explicit; skip generic detection. */

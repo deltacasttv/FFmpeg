@@ -40,6 +40,7 @@
 #include <VideoMasterHD/VideoMasterHD_Ip_Board.h>
 #include <VideoMasterHD/VideoMasterHD_Ip_ST2110_20.h>
 #include <VideoMasterHD/VideoMasterHD_Ip_ST2110_Board.h>
+#include <VideoMasterHD/VideoMasterHD_SDP.h>
 #include <VideoMasterHD/VideoMasterHD_Sdi.h>
 #include <VideoMasterHD/VideoMasterHD_Sdi_Audio.h>
 #include <VideoMasterHD/VideoMasterHD_String.h>
@@ -50,6 +51,7 @@
 #include <VideoMasterHD_Ip_Board.h>
 #include <VideoMasterHD_Ip_ST2110_20.h>
 #include <VideoMasterHD_Ip_ST2110_Board.h>
+#include <VideoMasterHD_SDP.h>
 #include <VideoMasterHD_Sdi.h>
 #include <VideoMasterHD_Sdi_Audio.h>
 #include <VideoMasterHD_String.h>
@@ -260,10 +262,11 @@ typedef struct VideoMasterContext
     uint32_t video_height;  ///< height of the video stream
     uint32_t
         video_frame_rate_num;  ///< base for the frame rate of the video stream
-    uint32_t video_frame_rate_den;    ///< denominator for the frame rate of the
-                                      ///< video stream
-    bool           video_interlaced;  ///< interlaced mode of the video stream
-    enum AVCodecID video_codec;       ///< codec ID of the video stream
+    uint32_t video_frame_rate_den;   ///< denominator for the frame rate of the
+                                     ///< video stream
+    bool video_interlaced;           ///< interlaced mode of the video stream
+    bool video_needs_field_reorder;  ///< frame buffer is top-half/bottom-half
+    enum AVCodecID video_codec;      ///< codec ID of the video stream
     enum AVPixelFormat
              video_pixel_format;  ///< pixel format of the video stream
     uint32_t video_bit_rate;      ///< bit rate of the video stream
@@ -283,8 +286,15 @@ typedef struct VideoMasterContext
     uint32_t                     ip_udp_port_src;
     uint32_t                     ip_sps_udp_port_src;
     uint32_t                     ip_video_payload_type;
+    uint32_t                     ip_sps_video_payload_type;
     VHD_ST2110_20_VIDEO_STANDARD ip_video_standard;
     VHD_ST2110_20_DEPTH          ip_video_depth;
+
+    /* SDP mode fields (set when ip_sdp_mode is true). */
+    bool            ip_sdp_mode;
+    VHD_SDP_SESSION ip_sdp_session;
+    VHD_SDP_MEDIA   ip_sdp_media[2];  ///< [0]=main stream, [1]=SPS stream
+    ULONG           ip_sdp_media_count;
 
     bool
         return_video_next;  ///< true if the next video frame should be returned
@@ -361,6 +371,7 @@ typedef struct VideoMasterData
     int64_t ip_video_framerate_den;
     int64_t ip_video_interlaced;
     int64_t ip_video_bit_depth;
+    char   *ip_sdp_file;
 } VideoMasterData;
 
 /**

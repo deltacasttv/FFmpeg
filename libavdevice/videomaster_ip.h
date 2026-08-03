@@ -159,11 +159,48 @@ int ff_videomaster_start_stream_ip_explicit(
  *
  * Wrapper that dispatches to IP-specific setup based on mode.
  * For explicit mode: calls ff_videomaster_start_stream_ip_explicit().
+ * For SDP mode: calls ff_videomaster_start_stream_ip_sdp().
  * For auto mode: performs minimal or no additional setup.
  *
  * @param videomaster_context The VideoMaster context.
  * @return 0 on success, negative AVERROR code on failure.
  */
 int ff_videomaster_start_stream_ip(VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Parses an SDP file and populates the IP/ST2110 context fields.
+ *
+ * Reads the file at videomaster_data->ip_sdp_file, parses it with
+ * VHD_ReadSDP(), and extracts stream parameters (destination IPs, ports,
+ * payload types, video standard and characteristics) into videomaster_context.
+ * Sets videomaster_context->ip_sdp_mode to true on success.
+ *
+ * Errors:
+ * - AVERROR(ENOENT)  if the file does not exist.
+ * - AVERROR(EINVAL)  if the SDP is non-compliant or contains unsupported
+ *                    content (>2 media entries, non-ST2110-20 type, IPv6).
+ *
+ * @param videomaster_data    Raw command-line data (provides the file path).
+ * @param videomaster_context Context to populate.
+ * @return 0 on success, negative AVERROR code on failure.
+ */
+int ff_videomaster_parse_sdp_file(VideoMasterData    *videomaster_data,
+                                  VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Configures all ST2110-20 stream properties from a parsed SDP.
+ *
+ * Applies video standard, sampling, depth, destination/source IP, UDP
+ * port, RTP payload type, and buffer packing from the SDP media entries
+ * stored in videomaster_context. Enables the SPS sub-stream when a second
+ * media entry is present. Also sets video_codec, video_pixel_format, and
+ * video_bit_rate. Does NOT call VHD_StartStream.
+ *
+ * @param videomaster_context The VideoMaster context (ip_sdp_mode must be
+ *                            true).
+ * @return 0 on success, negative AVERROR code on failure.
+ */
+int ff_videomaster_start_stream_ip_sdp(
+    VideoMasterContext *videomaster_context);
 
 #endif /* AVDEVICE_VIDEOMASTER_IP_H */
