@@ -1510,6 +1510,36 @@ enum AVVideoMasterChannelType ff_videomaster_get_channel_type_from_index(
     return AV_VIDEOMASTER_CHANNEL_UNKNOWN;
 }
 
+int ff_videomaster_reject_ip_params(VideoMasterData    *data,
+                                    VideoMasterContext *ctx)
+{
+    const char *tech = ff_videomaster_channel_type_to_string(ctx->channel_type);
+
+    if (data->ip_video_destination      != NULL ||
+        data->ip_video_sps_destination  != NULL ||
+        data->ip_video_source           != NULL ||
+        data->ip_video_sps_source       != NULL ||
+        data->ip_video_sdp_file         != NULL ||
+        data->ip_video_udp_port         > 0     ||
+        data->ip_video_sps_udp_port     > 0     ||
+        data->ip_video_udp_port_src     > 0     ||
+        data->ip_video_sps_udp_port_src > 0     ||
+        data->ip_video_width            > 0     ||
+        data->ip_video_height           > 0     ||
+        data->ip_video_framerate_num    > 0     ||
+        data->ip_video_framerate_den    > 0     ||
+        data->ip_video_interlaced       >= 0    ||
+        data->ip_video_bit_depth        > 0)
+    {
+        av_log(ctx->avctx, AV_LOG_ERROR,
+               "ip_video_* arguments are not applicable for %s channels.\n",
+               tech);
+        return AVERROR(EINVAL);
+    }
+
+    return 0;
+}
+
 int ff_videomaster_get_data(VideoMasterContext *videomaster_context)
 {
     int lock_slot_status = lock_slot(videomaster_context);

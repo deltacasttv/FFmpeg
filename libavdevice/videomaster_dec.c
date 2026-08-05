@@ -987,6 +987,40 @@ static int setup_video_stream(VideoMasterContext *videomaster_context)
 }
 
 /**** Public functions definitions */
+
+/* Computes AVPacket duration for a raw PCM audio buffer. */
+static int64_t fill_audio_packet_duration(uint32_t buf_size,
+                                          uint32_t nb_channels,
+                                          uint32_t sample_size,
+                                          uint32_t sample_rate)
+{
+    if (nb_channels == 0 || sample_size == 0 || sample_rate == 0)
+        return 1;
+    int bpf = ((int)sample_size + 7) / 8 * (int)nb_channels;
+    if (bpf <= 0)
+        return 1;
+    int64_t n = buf_size / bpf;
+    int64_t d = av_rescale(n, 1000000, sample_rate);
+    return d > 0 ? d : 1;
+}
+
+static void unlock_slot_dispatch(VideoMasterContext *ctx, void *slot)
+{
+    switch (ctx->channel_type)
+    {
+    case AV_VIDEOMASTER_CHANNEL_IP_2110:
+        ff_videomaster_unlock_slot_ip(ctx, slot);
+        break;
+    case AV_VIDEOMASTER_CHANNEL_SDI:
+    case AV_VIDEOMASTER_CHANNEL_ASISDI:
+        ff_videomaster_unlock_slot_sdi(ctx, slot);
+        break;
+    case AV_VIDEOMASTER_CHANNEL_HDMI:
+        ff_videomaster_unlock_slot_hdmi(ctx, slot);
+        break;
+    }
+}
+
 int ff_videomaster_list_input_devices(AVFormatContext         *avctx,
                                       struct AVDeviceInfoList *device_list)
 {
@@ -1090,6 +1124,8 @@ int ff_videomaster_read_close(AVFormatContext *avctx)
         }
     }
 
+    av_packet_free(&videomaster_context->pending_packet);
+
     if (videomaster_context)
     {
         av_freep(&videomaster_data->context);
@@ -1145,8 +1181,6 @@ int ff_videomaster_read_header(AVFormatContext *avctx)
                                    AVERROR(EIO));
     }
 
-    videomaster_context->return_video_next = true;
-
     return 0;
 }
 
@@ -1161,125 +1195,157 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
         return AVERROR(EINVAL);
     }
 
-    if (videomaster_context->return_video_next)
+    /* Return pre-buffered audio packet from the previous slot */
+    if (videomaster_context->pending_packet)
     {
-        videomaster_context->return_video_next = false;
-        if (ff_videomaster_get_data(videomaster_context) != 0)
+        av_packet_move_ref(pkt, videomaster_context->pending_packet);
+        av_packet_free(&videomaster_context->pending_packet);
+        return 0;
+    }
+
+    uint8_t *video_buf = NULL;
+    uint32_t video_size = 0;
+    uint8_t *audio_buf = NULL;
+    uint32_t audio_size = 0;
+    void    *slot = NULL;
+    int      lock_ret;
+
+    switch (videomaster_context->channel_type)
+    {
+    case AV_VIDEOMASTER_CHANNEL_IP_2110:
+        lock_ret = ff_videomaster_lock_next_slot_ip(videomaster_context,
+                                                    &video_buf, &video_size,
+                                                    &audio_buf, &audio_size,
+                                                    &slot);
+        break;
+    case AV_VIDEOMASTER_CHANNEL_SDI:
+    case AV_VIDEOMASTER_CHANNEL_ASISDI:
+        lock_ret = ff_videomaster_lock_next_slot_sdi(videomaster_context,
+                                                     &video_buf, &video_size,
+                                                     &audio_buf, &audio_size,
+                                                     &slot);
+        break;
+    case AV_VIDEOMASTER_CHANNEL_HDMI:
+        lock_ret = ff_videomaster_lock_next_slot_hdmi(videomaster_context,
+                                                      &video_buf, &video_size,
+                                                      &audio_buf, &audio_size,
+                                                      &slot);
+        break;
+    default:
+        av_log(avctx, AV_LOG_ERROR, "Unknown channel type\n");
+        return AVERROR(EINVAL);
+    }
+
+    if (lock_ret == AVERROR(EAGAIN))
+    {
+        av_log(avctx, AV_LOG_WARNING, "Timeout while waiting for slot lock\n");
+        return AVERROR(EAGAIN);
+    }
+    else if (lock_ret != 0)
+    {
+        av_log(avctx, AV_LOG_ERROR, "Failed to get data buffers\n");
+        return AVERROR(EIO);
+    }
+
+    /* Fill video packet (primary) */
+    if (videomaster_context->has_video && video_buf && video_size > 0)
+    {
+        if (av_new_packet(pkt, video_size) < 0)
         {
-            av_log(avctx, AV_LOG_ERROR, "Failed to get data buffers\n");
-            return AVERROR(EIO);
+            av_log(avctx, AV_LOG_ERROR,
+                   "Failed to allocate AVPacket for Video\n");
+            unlock_slot_dispatch(videomaster_context, slot);
+            return AVERROR(ENOMEM);
         }
-        if (videomaster_context->has_video)
+        if (videomaster_context->video_needs_field_reorder &&
+            videomaster_context->video_height > 0 &&
+            (videomaster_context->video_height % 2) == 0 &&
+            (video_size % videomaster_context->video_height) == 0)
+            interleave_sequential_fields(videomaster_context, pkt->data,
+                                         video_buf);
+        else
+            memcpy(pkt->data, video_buf, video_size);
+        pkt->stream_index = videomaster_context->video_stream->index;
+        ff_videomaster_get_timestamp(videomaster_context,
+                                     &videomaster_context->pts);
+        pkt->pts = videomaster_context->pts;
+        pkt->dts = pkt->pts;
+        if (videomaster_context->video_frame_rate_num > 0)
         {
-            if (av_new_packet(pkt, videomaster_context->video_buffer_size) < 0)
-            {
+            pkt->duration = av_rescale(
+                (int64_t)videomaster_context->video_frame_rate_den * 1000000, 1,
+                videomaster_context->video_frame_rate_num);
+            if (pkt->duration <= 0)
+                pkt->duration = 1;
+        }
+        else
+            pkt->duration = 1;
 
-                av_log(avctx, AV_LOG_ERROR,
-                       "Failed to allocate AVPacket for Video\n");
-                return AVERROR(ENOMEM);
-            }
-            else
-            {
-                if (videomaster_context->video_needs_field_reorder &&
-                    videomaster_context->video_height > 0 &&
-                    (videomaster_context->video_height % 2) == 0 &&
-                    (videomaster_context->video_buffer_size %
-                     videomaster_context->video_height) == 0)
-                    interleave_sequential_fields(
-                        videomaster_context, pkt->data,
-                        videomaster_context->video_buffer);
-                else
-                    memcpy(pkt->data, videomaster_context->video_buffer,
-                           videomaster_context->video_buffer_size);
-                pkt->stream_index = videomaster_context->video_stream->index;
-                ff_videomaster_get_timestamp(videomaster_context,
-                                             &videomaster_context->pts);
-                pkt->pts = videomaster_context->pts;
-                pkt->dts = pkt->pts;
-                if (videomaster_context->video_frame_rate_num > 0)
-                {
-                    pkt->duration = av_rescale(
-                        (int64_t)videomaster_context->video_frame_rate_den *
-                            1000000,
-                        1, videomaster_context->video_frame_rate_num);
-                    if (pkt->duration <= 0)
-                        pkt->duration = 1;
-                }
-                else
-                    pkt->duration = 1;
-            }
-
-            if (ff_videomaster_get_slots_counter(videomaster_context) != 0)
-            {
-                av_log(avctx, AV_LOG_ERROR, "Failed to get slots counter\n");
-                return AVERROR(EIO);
-            }
-            else
-            {
-                av_log(avctx, AV_LOG_TRACE, "%u frames received (%u dropped)\n",
-                       videomaster_context->frames_received,
-                       videomaster_context->frames_dropped);
-            }
+        if (ff_videomaster_get_slots_counter(videomaster_context) != 0)
+        {
+            av_log(avctx, AV_LOG_ERROR, "Failed to get slots counter\n");
+        }
+        else
+        {
+            av_log(avctx, AV_LOG_TRACE, "%u frames received (%u dropped)\n",
+                   videomaster_context->frames_received,
+                   videomaster_context->frames_dropped);
         }
     }
-    else
+    else if (videomaster_context->has_audio && audio_buf && audio_size > 0 &&
+             videomaster_context->audio_stream)
     {
-        videomaster_context->return_video_next = true;
-        if (videomaster_context->has_audio)
+        /* audio-only path: fill pkt directly (no video stream present) */
+        if (av_new_packet(pkt, audio_size) < 0)
         {
-            if (av_new_packet(pkt, videomaster_context->audio_buffer_size) < 0)
-            {
+            av_log(avctx, AV_LOG_ERROR,
+                   "Failed to allocate AVPacket for Audio\n");
+            unlock_slot_dispatch(videomaster_context, slot);
+            return AVERROR(ENOMEM);
+        }
+        memcpy(pkt->data, audio_buf, audio_size);
+        pkt->stream_index = videomaster_context->audio_stream->index;
+        pkt->pts = videomaster_context->pts;
+        pkt->dts = pkt->pts;
+        pkt->duration = fill_audio_packet_duration(
+            audio_size, videomaster_context->audio_nb_channels,
+            videomaster_context->audio_sample_size,
+            videomaster_context->audio_sample_rate);
+        videomaster_context->audio_frames_received += audio_size;
+        av_log(avctx, AV_LOG_TRACE, "%u audio frames received\n",
+               videomaster_context->audio_frames_received);
+    }
 
-                av_log(avctx, AV_LOG_ERROR,
-                       "Failed to allocate AVPacket for Audio\n");
-                return AVERROR(ENOMEM);
-            }
-            else
-            {
-                memcpy(pkt->data, videomaster_context->audio_buffer,
-                       videomaster_context->audio_buffer_size);
-                pkt->stream_index = videomaster_context->audio_stream->index;
-                pkt->pts = videomaster_context->pts;
-                pkt->dts = pkt->pts;
-                if (videomaster_context->audio_nb_channels > 0 &&
-                    videomaster_context->audio_sample_size > 0 &&
-                    videomaster_context->audio_sample_rate > 0)
-                {
-                    int bytes_per_sample =
-                        (videomaster_context->audio_sample_size + 7) / 8;
-                    int bytes_per_audio_frame =
-                        bytes_per_sample *
-                        videomaster_context->audio_nb_channels;
-                    if (bytes_per_audio_frame > 0)
-                    {
-                        int64_t sample_count =
-                            videomaster_context->audio_buffer_size /
-                            bytes_per_audio_frame;
-                        pkt->duration =
-                            av_rescale(sample_count, 1000000,
-                                       videomaster_context->audio_sample_rate);
-                        if (pkt->duration <= 0)
-                            pkt->duration = 1;
-                    }
-                    else
-                        pkt->duration = 1;
-                }
-                else
-                    pkt->duration = 1;
-            }
-            videomaster_context->audio_frames_received +=
-                videomaster_context->audio_buffer_size;
-
+    /* Pre-buffer audio packet when both video and audio are present */
+    if (videomaster_context->has_video && videomaster_context->has_audio &&
+        audio_buf && audio_size > 0 && videomaster_context->audio_stream)
+    {
+        videomaster_context->pending_packet = av_packet_alloc();
+        if (!videomaster_context->pending_packet ||
+            av_new_packet(videomaster_context->pending_packet, audio_size) < 0)
+        {
+            av_log(avctx, AV_LOG_ERROR,
+                   "Failed to allocate pending AVPacket for Audio\n");
+            av_packet_free(&videomaster_context->pending_packet);
+        }
+        else
+        {
+            AVPacket *apkt = videomaster_context->pending_packet;
+            memcpy(apkt->data, audio_buf, audio_size);
+            apkt->stream_index = videomaster_context->audio_stream->index;
+            apkt->pts = videomaster_context->pts;
+            apkt->dts = apkt->pts;
+            apkt->duration = fill_audio_packet_duration(
+                audio_size, videomaster_context->audio_nb_channels,
+                videomaster_context->audio_sample_size,
+                videomaster_context->audio_sample_rate);
+            videomaster_context->audio_frames_received += audio_size;
             av_log(avctx, AV_LOG_TRACE, "%u audio frames received\n",
                    videomaster_context->audio_frames_received);
         }
-        if (ff_videomaster_release_data(videomaster_context) != 0)
-        {
-            av_log(avctx, AV_LOG_ERROR, "Failed to release data\n");
-            return AVERROR(EIO);
-        }
     }
 
+    unlock_slot_dispatch(videomaster_context, slot);
     return 0;
 }
 

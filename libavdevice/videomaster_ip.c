@@ -1008,3 +1008,26 @@ int ff_videomaster_start_stream_ip(VideoMasterContext *videomaster_context)
 
     return set_buffer_packing_and_codec(videomaster_context);
 }
+
+int ff_videomaster_lock_next_slot_ip(VideoMasterContext *ctx,
+                                     uint8_t **video_buf, uint32_t *video_size,
+                                     uint8_t **audio_buf, uint32_t *audio_size,
+                                     void    **slot_to_unlock)
+{
+    /* Phase 3 will implement sync-handle and audio-essence paths */
+    int ret = ff_videomaster_get_data(ctx);
+    if (ret != 0)
+        return ret;
+    *video_buf      = ctx->video_buffer;
+    *video_size     = ctx->video_buffer_size;
+    *audio_buf      = ctx->audio_buffer;
+    *audio_size     = ctx->audio_buffer_size;
+    *slot_to_unlock = ctx->slot_handle;
+    return 0;
+}
+
+int ff_videomaster_unlock_slot_ip(VideoMasterContext *ctx, void *slot)
+{
+    (void)slot;
+    return ff_videomaster_release_data(ctx);
+}

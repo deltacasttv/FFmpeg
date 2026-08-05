@@ -296,8 +296,7 @@ typedef struct VideoMasterContext
     VHD_SDP_MEDIA   ip_video_sdp_media[2];  ///< [0]=main stream, [1]=SPS stream
     ULONG           ip_video_sdp_media_count;
 
-    bool
-        return_video_next;  ///< true if the next video frame should be returned
+    AVPacket *pending_packet;  ///< audio packet buffered from the current slot
     float ltc_frame_rate;   ///< frame rate for LTC timestamp calculation
 
     // audio stream data
@@ -512,6 +511,15 @@ enum AVVideoMasterChannelType ff_videomaster_get_channel_type_from_index(
  *         AVERROR(EIO) for I/O error
  */
 int ff_videomaster_get_data(VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Rejects IP video parameters for non-IP channel types (SDI, HDMI).
+ *
+ * Returns AVERROR(EINVAL) if any ip_video_* option has been set. Phase 4 (bis)
+ * will extend this to cover audio IP parameters once Phase 3 introduces them.
+ */
+int ff_videomaster_reject_ip_params(VideoMasterData    *data,
+                                    VideoMasterContext *ctx);
 
 /**
  * @brief Retrieves the number of available RX channels for a specified board.

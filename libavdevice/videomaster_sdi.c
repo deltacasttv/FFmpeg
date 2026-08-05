@@ -116,22 +116,8 @@ int ff_videomaster_validate_arguments_sdi(
     }
 
     /* IP arguments must not be specified for SDI */
-    if (videomaster_data->ip_video_destination != NULL ||
-        videomaster_data->ip_video_sps_destination != NULL ||
-        videomaster_data->ip_video_udp_port > 0 ||
-        videomaster_data->ip_video_sps_udp_port > 0 ||
-        videomaster_data->ip_video_payload_type > 0 ||
-        videomaster_data->ip_video_sps_payload_type > 0 ||
-        videomaster_data->ip_video_width > 0 ||
-        videomaster_data->ip_video_height > 0)
-    {
-        av_log(
-            videomaster_context->avctx, AV_LOG_ERROR,
-            "IP-specific arguments (ip_video_destination, ip_video_udp_port, "
-            "ip_video_payload_type, ip_video_*) are not applicable for SDI "
-            "channels.\n");
+    if (ff_videomaster_reject_ip_params(videomaster_data, videomaster_context) != 0)
         return AVERROR(EINVAL);
-    }
 
     return 0;
 }
@@ -795,4 +781,26 @@ int ff_videomaster_start_stream_sdi(VideoMasterContext *videomaster_context)
             &videomaster_context->audio_info.sdi.audio_info);
 
     return 0;
+}
+
+int ff_videomaster_lock_next_slot_sdi(VideoMasterContext *ctx,
+                                      uint8_t **video_buf, uint32_t *video_size,
+                                      uint8_t **audio_buf, uint32_t *audio_size,
+                                      void    **slot_to_unlock)
+{
+    int ret = ff_videomaster_get_data(ctx);
+    if (ret != 0)
+        return ret;
+    *video_buf      = ctx->video_buffer;
+    *video_size     = ctx->video_buffer_size;
+    *audio_buf      = ctx->audio_buffer;
+    *audio_size     = ctx->audio_buffer_size;
+    *slot_to_unlock = ctx->slot_handle;
+    return 0;
+}
+
+int ff_videomaster_unlock_slot_sdi(VideoMasterContext *ctx, void *slot)
+{
+    (void)slot;
+    return ff_videomaster_release_data(ctx);
 }

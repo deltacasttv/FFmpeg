@@ -167,4 +167,17 @@ void ff_videomaster_format_channel_description_sdi(
  */
 int ff_videomaster_start_stream_sdi(VideoMasterContext *videomaster_context);
 
+/**
+ * @brief Locks the next slot and fills video/audio buffer pointers (SDI/ASI).
+ * @param slot_to_unlock Receives the slot handle to pass to unlock.
+ * @return 0 on success, AVERROR(EAGAIN) on timeout, AVERROR(EIO) on failure.
+ */
+int ff_videomaster_lock_next_slot_sdi(VideoMasterContext *ctx,
+                                      uint8_t **video_buf, uint32_t *video_size,
+                                      uint8_t **audio_buf, uint32_t *audio_size,
+                                      void    **slot_to_unlock);
+
+/** @brief Unlocks the slot obtained from ff_videomaster_lock_next_slot_sdi. */
+int ff_videomaster_unlock_slot_sdi(VideoMasterContext *ctx, void *slot);
+
 #endif /* AVDEVICE_VIDEOMASTER_SDI_H */
