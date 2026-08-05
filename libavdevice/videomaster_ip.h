@@ -110,7 +110,7 @@ uint32_t ff_videomaster_get_video_buffer_type_ip();
  * @brief Prepares the IP board for main stream reception.
  *
  * For IP ST2110 channels: joins the multicast group on the main ethernet
- * port (port 0) if ip_destination is a multicast address.
+ * port (port 0) if ip_video_destination is a multicast address.
  * Must be called after ff_videomaster_open_board_handle() and before
  * ff_videomaster_open_stream_handle() for IP channels.
  *
@@ -124,7 +124,7 @@ int ff_videomaster_join_multicast_group(
  * @brief Prepares the IP board for main stream reception.
  *
  * For IP ST2110 channels: leaves the multicast group on the main ethernet
- * port (port 0) if ip_destination is a multicast address.
+ * port (port 0) if ip_video_destination is a multicast address.
  *
  *
  * @param videomaster_context The VideoMaster context to use.
@@ -134,46 +134,25 @@ int ff_videomaster_leave_multicast_group(
     VideoMasterContext *videomaster_context);
 
 /**
- * @brief Configures all ST2110-20 stream properties for explicit mode.
+ * @brief Configures all ST2110-20 stream properties on the video stream handle.
  *
- * Sets video standard, sampling, depth, SPS disabled, destination IP,
- * optional source IP (unicast RX filtering), optional UDP destination and
- * source ports, optional RTP payload type filtering, and buffer packing
- * determined by bit depth. Also sets video_codec, video_pixel_format and
- * video_bit_rate on the context. Does NOT call VHD_StartStream.
- *
- * For the SPS stream (when ip_sps_destination is set), also configures
- * optional SPS source IP and SPS UDP source port, and sets the SPS RX
- * filtering mask (VHD_ST2110_SP_SPS_FILTERING_MASK).
- *
- * Called from ff_videomaster_start_stream() in videomaster_common.c.
+ * Resolves the video standard (explicit mode only), then sets standard,
+ * sampling, depth, SPS enable, destination/source IP, UDP ports, RTP
+ * payload type, buffer packing, codec and bitrate. Does NOT call
+ * VHD_StartStream.
  *
  * @param videomaster_context The VideoMaster context to use.
  * @return 0 on success, or negative AVERROR code on failure.
- */
-int ff_videomaster_start_stream_ip_explicit(
-    VideoMasterContext *videomaster_context);
-
-/**
- * @brief Configures IP/ST2110-specific stream properties.
- *
- * Wrapper that dispatches to IP-specific setup based on mode.
- * For explicit mode: calls ff_videomaster_start_stream_ip_explicit().
- * For SDP mode: calls ff_videomaster_start_stream_ip_sdp().
- * For auto mode: performs minimal or no additional setup.
- *
- * @param videomaster_context The VideoMaster context.
- * @return 0 on success, negative AVERROR code on failure.
  */
 int ff_videomaster_start_stream_ip(VideoMasterContext *videomaster_context);
 
 /**
  * @brief Parses an SDP file and populates the IP/ST2110 context fields.
  *
- * Reads the file at videomaster_data->ip_sdp_file, parses it with
+ * Reads the file at videomaster_data->ip_video_sdp_file, parses it with
  * VHD_ReadSDP(), and extracts stream parameters (destination IPs, ports,
  * payload types, video standard and characteristics) into videomaster_context.
- * Sets videomaster_context->ip_sdp_mode to true on success.
+ * Sets videomaster_context->ip_video_sdp_mode to true on success.
  *
  * Errors:
  * - AVERROR(ENOENT)  if the file does not exist.
@@ -186,21 +165,5 @@ int ff_videomaster_start_stream_ip(VideoMasterContext *videomaster_context);
  */
 int ff_videomaster_parse_sdp_file(VideoMasterData    *videomaster_data,
                                   VideoMasterContext *videomaster_context);
-
-/**
- * @brief Configures all ST2110-20 stream properties from a parsed SDP.
- *
- * Applies video standard, sampling, depth, destination/source IP, UDP
- * port, RTP payload type, and buffer packing from the SDP media entries
- * stored in videomaster_context. Enables the SPS sub-stream when a second
- * media entry is present. Also sets video_codec, video_pixel_format, and
- * video_bit_rate. Does NOT call VHD_StartStream.
- *
- * @param videomaster_context The VideoMaster context (ip_sdp_mode must be
- *                            true).
- * @return 0 on success, negative AVERROR code on failure.
- */
-int ff_videomaster_start_stream_ip_sdp(
-    VideoMasterContext *videomaster_context);
 
 #endif /* AVDEVICE_VIDEOMASTER_IP_H */

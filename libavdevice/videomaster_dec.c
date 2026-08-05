@@ -114,13 +114,13 @@ static int extract_context_or_log(AVFormatContext     *avctx,
  * This function handles errors that occur before the stream is started by
  * logging the error message and closing the board handle.
  *
- * @param ctx Pointer to the VideoMaster context
+ * @param videomaster_context Pointer to the VideoMaster context
  * @param message Error message to log
  * @param error_code Error code to return
  * @return int 0 on success, or negative AVERROR code on failure
  */
-static int handle_board_error(VideoMasterContext *ctx, const char *message,
-                              int error_code);
+static int handle_board_error(VideoMasterContext *videomaster_context,
+                              const char *message, int error_code);
 
 /**
  * @brief Common error handling for stream operations
@@ -128,13 +128,13 @@ static int handle_board_error(VideoMasterContext *ctx, const char *message,
  * This function handles errors that occur during stream operations by logging
  * the error message, closing the stream handle, and closing the board handle.
  *
- * @param ctx Pointer to the VideoMaster context
+ * @param videomaster_context Pointer to the VideoMaster context
  * @param message Error message to log
  * @param error_code Error code to return
  * @return int 0 on success, or negative AVERROR code on failure
  */
-static int handle_stream_error(VideoMasterContext *ctx, const char *message,
-                               int error_code);
+static int handle_stream_error(VideoMasterContext *videomaster_context,
+                               const char *message, int error_code);
 
 /**
  * @brief Parses command line arguments for the VideoMaster DELTACAST(c) device.
@@ -207,12 +207,12 @@ static int setup_video_stream(VideoMasterContext *videomaster_context);
  * Input layout: all top-field lines first, then all bottom-field lines.
  * Output layout: alternating lines (top0, bottom0, top1, bottom1, ...).
  */
-static void interleave_sequential_fields(const VideoMasterContext *ctx,
-                                         uint8_t                  *dst,
-                                         const uint8_t            *src)
+static void
+interleave_sequential_fields(const VideoMasterContext *videomaster_context,
+                             uint8_t *dst, const uint8_t *src)
 {
-    uint32_t height = ctx->video_height;
-    uint32_t stride = ctx->video_buffer_size / height;
+    uint32_t       height = videomaster_context->video_height;
+    uint32_t       stride = videomaster_context->video_buffer_size / height;
     const uint8_t *top = src;
     const uint8_t *bottom = src + (height / 2) * stride;
 
@@ -540,20 +540,20 @@ static int extract_context_or_log(AVFormatContext     *avctx,
     return 0;
 }
 
-static int handle_board_error(VideoMasterContext *ctx, const char *message,
-                              int error_code)
+static int handle_board_error(VideoMasterContext *videomaster_context,
+                              const char *message, int error_code)
 {
-    av_log(ctx->avctx, AV_LOG_ERROR, "%s\n", message);
-    ff_videomaster_close_board_handle(ctx);
+    av_log(videomaster_context->avctx, AV_LOG_ERROR, "%s\n", message);
+    ff_videomaster_close_board_handle(videomaster_context);
     return error_code;
 }
 
-static int handle_stream_error(VideoMasterContext *ctx, const char *message,
-                               int error_code)
+static int handle_stream_error(VideoMasterContext *videomaster_context,
+                               const char *message, int error_code)
 {
-    av_log(ctx->avctx, AV_LOG_ERROR, "%s\n", message);
-    ff_videomaster_close_stream_handle(ctx);
-    ff_videomaster_close_board_handle(ctx);
+    av_log(videomaster_context->avctx, AV_LOG_ERROR, "%s\n", message);
+    ff_videomaster_close_stream_handle(videomaster_context);
+    ff_videomaster_close_board_handle(videomaster_context);
     return error_code;
 }
 
@@ -653,14 +653,15 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
 
         /* SDP mode and explicit mode are mutually exclusive. */
         {
-            bool has_sdp = videomaster_data->ip_sdp_file != NULL;
-            bool has_explicit = videomaster_data->ip_destination != NULL;
+            bool has_sdp = videomaster_data->ip_video_sdp_file != NULL;
+            bool has_explicit = videomaster_data->ip_video_destination != NULL;
 
             if (has_sdp && has_explicit)
             {
-                av_log(avctx, AV_LOG_ERROR,
-                       "ip_sdp_file and ip_destination are mutually "
-                       "exclusive.\n");
+                av_log(
+                    avctx, AV_LOG_ERROR,
+                    "ip_video_sdp_file and ip_video_destination are mutually "
+                    "exclusive.\n");
                 return AVERROR(EINVAL);
             }
 
@@ -678,24 +679,26 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
                      videomaster_data->ip_video_interlaced >= 0 &&
                      videomaster_data->ip_video_bit_depth > 0)
             {
-                if (parse_ipv4_address(videomaster_data->ip_destination,
-                                       &videomaster_context->ip_destination) <
-                    0)
+                if (parse_ipv4_address(
+                        videomaster_data->ip_video_destination,
+                        &videomaster_context->ip_video_destination) < 0)
                 {
-                    av_log(avctx, AV_LOG_ERROR,
-                           "Invalid IPv4 address for ip_destination: %s\n",
-                           videomaster_data->ip_destination);
+                    av_log(
+                        avctx, AV_LOG_ERROR,
+                        "Invalid IPv4 address for ip_video_destination: %s\n",
+                        videomaster_data->ip_video_destination);
                     return AVERROR(EINVAL);
                 }
 
-                if (videomaster_data->ip_sps_destination != NULL &&
+                if (videomaster_data->ip_video_sps_destination != NULL &&
                     parse_ipv4_address(
-                        videomaster_data->ip_sps_destination,
-                        &videomaster_context->ip_sps_destination) < 0)
+                        videomaster_data->ip_video_sps_destination,
+                        &videomaster_context->ip_video_sps_destination) < 0)
                 {
                     av_log(avctx, AV_LOG_ERROR,
-                           "Invalid IPv4 address for ip_sps_destination: %s\n",
-                           videomaster_data->ip_sps_destination);
+                           "Invalid IPv4 address for ip_video_sps_destination: "
+                           "%s\n",
+                           videomaster_data->ip_video_sps_destination);
                     return AVERROR(EINVAL);
                 }
 
@@ -709,46 +712,52 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
                     return AVERROR(EINVAL);
                 }
 
-                videomaster_context->ip_udp_port =
-                    videomaster_data->ip_udp_port > 0
-                        ? (uint32_t)videomaster_data->ip_udp_port
+                videomaster_context->ip_video_udp_port =
+                    videomaster_data->ip_video_udp_port > 0
+                        ? (uint32_t)videomaster_data->ip_video_udp_port
                         : 0;
-                videomaster_context->ip_sps_udp_port =
-                    videomaster_data->ip_sps_udp_port > 0
-                        ? (uint32_t)videomaster_data->ip_sps_udp_port
+                videomaster_context->ip_video_sps_udp_port =
+                    videomaster_data->ip_video_sps_udp_port > 0
+                        ? (uint32_t)videomaster_data->ip_video_sps_udp_port
                         : 0;
 
-                if (videomaster_data->ip_source != NULL &&
-                    parse_ipv4_address(videomaster_data->ip_source,
-                                       &videomaster_context->ip_source) < 0)
+                if (videomaster_data->ip_video_source != NULL &&
+                    parse_ipv4_address(videomaster_data->ip_video_source,
+                                       &videomaster_context->ip_video_source) <
+                        0)
                 {
                     av_log(avctx, AV_LOG_ERROR,
-                           "Invalid IPv4 address for ip_source: %s\n",
-                           videomaster_data->ip_source);
+                           "Invalid IPv4 address for ip_video_source: %s\n",
+                           videomaster_data->ip_video_source);
                     return AVERROR(EINVAL);
                 }
 
-                if (videomaster_data->ip_sps_source != NULL &&
-                    parse_ipv4_address(videomaster_data->ip_sps_source,
-                                       &videomaster_context->ip_sps_source) < 0)
+                if (videomaster_data->ip_video_sps_source != NULL &&
+                    parse_ipv4_address(
+                        videomaster_data->ip_video_sps_source,
+                        &videomaster_context->ip_video_sps_source) < 0)
                 {
                     av_log(avctx, AV_LOG_ERROR,
-                           "Invalid IPv4 address for ip_sps_source: %s\n",
-                           videomaster_data->ip_sps_source);
+                           "Invalid IPv4 address for ip_video_sps_source: %s\n",
+                           videomaster_data->ip_video_sps_source);
                     return AVERROR(EINVAL);
                 }
 
-                videomaster_context->ip_udp_port_src =
-                    videomaster_data->ip_udp_port_src > 0
-                        ? (uint32_t)videomaster_data->ip_udp_port_src
+                videomaster_context->ip_video_udp_port_src =
+                    videomaster_data->ip_video_udp_port_src > 0
+                        ? (uint32_t)videomaster_data->ip_video_udp_port_src
                         : 0;
-                videomaster_context->ip_sps_udp_port_src =
-                    videomaster_data->ip_sps_udp_port_src > 0
-                        ? (uint32_t)videomaster_data->ip_sps_udp_port_src
+                videomaster_context->ip_video_sps_udp_port_src =
+                    videomaster_data->ip_video_sps_udp_port_src > 0
+                        ? (uint32_t)videomaster_data->ip_video_sps_udp_port_src
                         : 0;
                 videomaster_context->ip_video_payload_type =
                     videomaster_data->ip_video_payload_type > 0
                         ? (uint32_t)videomaster_data->ip_video_payload_type
+                        : 0;
+                videomaster_context->ip_video_sps_payload_type =
+                    videomaster_data->ip_video_sps_payload_type > 0
+                        ? (uint32_t)videomaster_data->ip_video_sps_payload_type
                         : 0;
                 videomaster_context->video_width =
                     (uint32_t)videomaster_data->ip_video_width;
@@ -777,18 +786,19 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
            VHD_BUFFERPACKING_ToPrettyString(
                videomaster_context->video_buffer_packing));
 
-    if (videomaster_context->ip_destination != 0 &&
-        !videomaster_context->ip_sdp_mode)
+    if (videomaster_context->ip_video_destination != 0 &&
+        !videomaster_context->ip_video_sdp_mode)
     {
         av_log(avctx, AV_LOG_INFO,
                "IP 2110 explicit mode: destination=%s, udp_port=%u, "
                "source=%s, udp_port_src=%u, "
                "payload_type=%u, video=%ux%u@%u/%u %s, depth=%s\n",
-               videomaster_data->ip_destination,
-               videomaster_context->ip_udp_port,
-               videomaster_data->ip_source ? videomaster_data->ip_source
-                                           : "any",
-               videomaster_context->ip_udp_port_src,
+               videomaster_data->ip_video_destination,
+               videomaster_context->ip_video_udp_port,
+               videomaster_data->ip_video_source
+                   ? videomaster_data->ip_video_source
+                   : "any",
+               videomaster_context->ip_video_udp_port_src,
                videomaster_context->ip_video_payload_type,
                videomaster_context->video_width,
                videomaster_context->video_height,
@@ -800,26 +810,28 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
                    ? "10-bit"
                    : "8-bit");
 
-        if (videomaster_context->ip_sps_destination != 0)
+        if (videomaster_context->ip_video_sps_destination != 0)
         {
             av_log(avctx, AV_LOG_INFO,
                    "IP 2110 SPS explicit mode: destination=%s, udp_port=%u, "
-                   "source=%s, udp_port_src=%u\n",
-                   videomaster_data->ip_sps_destination,
-                   videomaster_context->ip_sps_udp_port,
-                   videomaster_data->ip_sps_source
-                       ? videomaster_data->ip_sps_source
+                   "source=%s, udp_port_src=%u, payload_type=%u\n",
+                   videomaster_data->ip_video_sps_destination,
+                   videomaster_context->ip_video_sps_udp_port,
+                   videomaster_data->ip_video_sps_source
+                       ? videomaster_data->ip_video_sps_source
                        : "any",
-                   videomaster_context->ip_sps_udp_port_src);
+                   videomaster_context->ip_video_sps_udp_port_src,
+                   videomaster_context->ip_video_sps_payload_type);
         }
     }
-    else if (videomaster_context->ip_sdp_mode)
+    else if (videomaster_context->ip_video_sdp_mode)
     {
         av_log(avctx, AV_LOG_INFO,
-               "IP 2110 SDP mode: file=%s, "
+               "IP 2110 SDP mode (main stream): file=%s, "
                "video=%ux%u@%u/%u %s, depth=%s, "
                "main dst=%u.%u.%u.%u:%u pt=%u%s\n",
-               videomaster_data->ip_sdp_file, videomaster_context->video_width,
+               videomaster_data->ip_video_sdp_file,
+               videomaster_context->video_width,
                videomaster_context->video_height,
                videomaster_context->video_frame_rate_num,
                videomaster_context->video_frame_rate_den,
@@ -828,14 +840,29 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
                videomaster_context->ip_video_depth == VHD_ST2110_20_DEPTH_10BIT
                    ? "10-bit"
                    : "8-bit",
-               (videomaster_context->ip_destination >> 24) & 0xFF,
-               (videomaster_context->ip_destination >> 16) & 0xFF,
-               (videomaster_context->ip_destination >> 8) & 0xFF,
-               videomaster_context->ip_destination & 0xFF,
-               videomaster_context->ip_udp_port,
+               (videomaster_context->ip_video_destination >> 24) & 0xFF,
+               (videomaster_context->ip_video_destination >> 16) & 0xFF,
+               (videomaster_context->ip_video_destination >> 8) & 0xFF,
+               videomaster_context->ip_video_destination & 0xFF,
+               videomaster_context->ip_video_udp_port,
                videomaster_context->ip_video_payload_type,
-               videomaster_context->ip_sdp_media_count > 1 ? " (SPS present)"
-                                                           : "");
+               videomaster_context->ip_video_sdp_media_count > 1
+                   ? " (SPS present)"
+                   : "");
+
+        if (videomaster_context->ip_video_sdp_media_count > 1)
+        {
+            av_log(avctx, AV_LOG_INFO,
+                   "IP 2110 SDP mode (SPS stream): file=%s, "
+                   "SPS dst=%u.%u.%u.%u:%u pt=%u\n",
+                   videomaster_data->ip_video_sdp_file,
+                   (videomaster_context->ip_video_sps_destination >> 24) & 0xFF,
+                   (videomaster_context->ip_video_sps_destination >> 16) & 0xFF,
+                   (videomaster_context->ip_video_sps_destination >> 8) & 0xFF,
+                   videomaster_context->ip_video_sps_destination & 0xFF,
+                   videomaster_context->ip_video_sps_udp_port,
+                   videomaster_context->ip_video_sps_payload_type);
+        }
     }
 
     return 0;
@@ -927,8 +954,8 @@ static int setup_video_stream(VideoMasterContext *videomaster_context)
         av_stream->codecpar->codec_id = videomaster_context->video_codec;
         av_stream->codecpar->format = videomaster_context->video_pixel_format;
         av_stream->codecpar->field_order = videomaster_context->video_interlaced
-                               ? AV_FIELD_TT
-                               : AV_FIELD_PROGRESSIVE;
+                                               ? AV_FIELD_TT
+                                               : AV_FIELD_PROGRESSIVE;
 
         /* Broadcast content is always limited (studio swing) range. */
         av_stream->codecpar->color_range = AVCOL_RANGE_MPEG;
@@ -1157,11 +1184,10 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
                     videomaster_context->video_height > 0 &&
                     (videomaster_context->video_height % 2) == 0 &&
                     (videomaster_context->video_buffer_size %
-                         videomaster_context->video_height) ==
-                        0)
-                    interleave_sequential_fields(videomaster_context,
-                                                 pkt->data,
-                                                 videomaster_context->video_buffer);
+                     videomaster_context->video_height) == 0)
+                    interleave_sequential_fields(
+                        videomaster_context, pkt->data,
+                        videomaster_context->video_buffer);
                 else
                     memcpy(pkt->data, videomaster_context->video_buffer,
                            videomaster_context->video_buffer_size);
@@ -1222,14 +1248,16 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
                     int bytes_per_sample =
                         (videomaster_context->audio_sample_size + 7) / 8;
                     int bytes_per_audio_frame =
-                        bytes_per_sample * videomaster_context->audio_nb_channels;
+                        bytes_per_sample *
+                        videomaster_context->audio_nb_channels;
                     if (bytes_per_audio_frame > 0)
                     {
                         int64_t sample_count =
                             videomaster_context->audio_buffer_size /
                             bytes_per_audio_frame;
-                        pkt->duration = av_rescale(sample_count, 1000000,
-                                                   videomaster_context->audio_sample_rate);
+                        pkt->duration =
+                            av_rescale(sample_count, 1000000,
+                                       videomaster_context->audio_sample_rate);
                         if (pkt->duration <= 0)
                             pkt->duration = 1;
                     }
@@ -1773,74 +1801,77 @@ static const AVOption options[] = {
       1,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
-    { "ip_destination",
-      "IPv4 destination address for main ST2110 stream in explicit mode.",
-      OFFSET(ip_destination),
+    { "ip_video_destination",
+      "IPv4 destination address for main ST2110 video stream in explicit mode.",
+      OFFSET(ip_video_destination),
       AV_OPT_TYPE_STRING,
       { .str = NULL },
       0,
       0,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
-    { "ip_sps_destination",
-      "IPv4 SPS destination address for main ST2110 stream in explicit mode.",
-      OFFSET(ip_sps_destination),
+    { "ip_video_sps_destination",
+      "IPv4 SPS destination address for main ST2110 video stream in explicit "
+      "mode.",
+      OFFSET(ip_video_sps_destination),
       AV_OPT_TYPE_STRING,
       { .str = NULL },
       0,
       0,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
-    { "ip_udp_port",
-      "UDP destination port for main ST2110 stream in explicit mode.",
-      OFFSET(ip_udp_port),
+    { "ip_video_udp_port",
+      "UDP destination port for main ST2110 video stream in explicit mode.",
+      OFFSET(ip_video_udp_port),
       AV_OPT_TYPE_INT64,
       { .i64 = -1 },
       -1,
       65535,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
-    { "ip_sps_udp_port",
-      "UDP SPS destination port for main ST2110 stream in explicit mode.",
-      OFFSET(ip_sps_udp_port),
+    { "ip_video_sps_udp_port",
+      "UDP SPS destination port for main ST2110 video stream in explicit mode.",
+      OFFSET(ip_video_sps_udp_port),
       AV_OPT_TYPE_INT64,
       { .i64 = -1 },
       -1,
       65535,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
-    { "ip_source",
-      "IPv4 source address of the main ST2110 stream in explicit mode "
+    { "ip_video_source",
+      "IPv4 source address of the main ST2110 video stream in explicit mode "
       "(unicast RX source filtering). Optional.",
-      OFFSET(ip_source),
+      OFFSET(ip_video_source),
       AV_OPT_TYPE_STRING,
       { .str = NULL },
       0,
       0,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
-    { "ip_sps_source",
-      "IPv4 source address of the SPS ST2110 stream in explicit mode "
+    { "ip_video_sps_source",
+      "IPv4 source address of the SPS ST2110 video stream in explicit mode "
       "(unicast RX source filtering). Optional.",
-      OFFSET(ip_sps_source),
+      OFFSET(ip_video_sps_source),
       AV_OPT_TYPE_STRING,
       { .str = NULL },
       0,
       0,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
-    { "ip_udp_port_src",
-      "UDP source port of the main ST2110 stream in explicit mode. Optional.",
-      OFFSET(ip_udp_port_src),
+    { "ip_video_udp_port_src",
+      "UDP source port of the main ST2110 video stream in explicit mode. "
+      "Optional.",
+      OFFSET(ip_video_udp_port_src),
       AV_OPT_TYPE_INT64,
       { .i64 = -1 },
       -1,
       65535,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
-    { "ip_sps_udp_port_src",
-      "UDP source port of the SPS ST2110 stream in explicit mode. Optional.",
-      OFFSET(ip_sps_udp_port_src),
+    { "ip_video_sps_udp_port_src",
+      "UDP source port of the SPS ST2110 video stream in explicit mode. "
+      "Optional.",
+      OFFSET(ip_video_sps_udp_port_src),
       AV_OPT_TYPE_INT64,
       { .i64 = -1 },
       -1,
@@ -1850,6 +1881,15 @@ static const AVOption options[] = {
     { "ip_video_payload_type",
       "RTP video payload type for ST2110 stream in explicit mode.",
       OFFSET(ip_video_payload_type),
+      AV_OPT_TYPE_INT64,
+      { .i64 = 96 },
+      0,
+      127,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
+      NULL },
+    { "ip_video_sps_payload_type",
+      "RTP video payload type for SPS ST2110 stream in explicit mode.",
+      OFFSET(ip_video_sps_payload_type),
       AV_OPT_TYPE_INT64,
       { .i64 = 96 },
       0,
@@ -1911,11 +1951,11 @@ static const AVOption options[] = {
       10,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
-    { "ip_sdp_file",
-      "Path to an SDP file describing the ST2110-20 stream (main and optional "
-      "SPS). Mutually exclusive with ip_destination and all ip_video_* "
-      "options.",
-      OFFSET(ip_sdp_file),
+    { "ip_video_sdp_file",
+      "Path to an SDP file describing the ST2110-20 video stream (main and "
+      "optional SPS). Mutually exclusive with ip_video_destination and all "
+      "ip_video_* options.",
+      OFFSET(ip_video_sdp_file),
       AV_OPT_TYPE_STRING,
       { .str = NULL },
       0,

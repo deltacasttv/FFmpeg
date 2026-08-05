@@ -273,28 +273,28 @@ typedef struct VideoMasterContext
     enum AVVideoMasterBufferPacking
         video_buffer_packing;  ///< buffer packing format
 
-    /* IP ST2110 explicit mode fields.
+    /* IP ST2110 explicit mode fields (video essence).
      * Main port is always VHD_IP_BRD_ETHERNETPORT_ETH_0 for the main
      * stream. SPS will use VHD_IP_BRD_ETHERNETPORT_ETH_1 when added.
      */
-    uint32_t                     ip_destination;
-    uint32_t                     ip_sps_destination;
-    uint32_t                     ip_udp_port;
-    uint32_t                     ip_sps_udp_port;
-    uint32_t                     ip_source;
-    uint32_t                     ip_sps_source;
-    uint32_t                     ip_udp_port_src;
-    uint32_t                     ip_sps_udp_port_src;
+    uint32_t                     ip_video_destination;
+    uint32_t                     ip_video_sps_destination;
+    uint32_t                     ip_video_udp_port;
+    uint32_t                     ip_video_sps_udp_port;
+    uint32_t                     ip_video_source;
+    uint32_t                     ip_video_sps_source;
+    uint32_t                     ip_video_udp_port_src;
+    uint32_t                     ip_video_sps_udp_port_src;
     uint32_t                     ip_video_payload_type;
-    uint32_t                     ip_sps_video_payload_type;
+    uint32_t                     ip_video_sps_payload_type;
     VHD_ST2110_20_VIDEO_STANDARD ip_video_standard;
     VHD_ST2110_20_DEPTH          ip_video_depth;
 
-    /* SDP mode fields (set when ip_sdp_mode is true). */
-    bool            ip_sdp_mode;
-    VHD_SDP_SESSION ip_sdp_session;
-    VHD_SDP_MEDIA   ip_sdp_media[2];  ///< [0]=main stream, [1]=SPS stream
-    ULONG           ip_sdp_media_count;
+    /* SDP mode fields for the video essence. */
+    bool            ip_video_sdp_mode;
+    VHD_SDP_SESSION ip_video_sdp_session;
+    VHD_SDP_MEDIA   ip_video_sdp_media[2];  ///< [0]=main stream, [1]=SPS stream
+    ULONG           ip_video_sdp_media_count;
 
     bool
         return_video_next;  ///< true if the next video frame should be returned
@@ -356,22 +356,23 @@ typedef struct VideoMasterData
     int64_t dual_stream;  ///< 0/1 if the stream must be configured with 3G-B-DS
                           ///< interface
 
-    char   *ip_destination;
-    int64_t ip_udp_port;
-    char   *ip_sps_destination;
-    int64_t ip_sps_udp_port;
-    char   *ip_source;
-    char   *ip_sps_source;
-    int64_t ip_udp_port_src;
-    int64_t ip_sps_udp_port_src;
+    char   *ip_video_destination;
+    int64_t ip_video_udp_port;
+    char   *ip_video_sps_destination;
+    int64_t ip_video_sps_udp_port;
+    char   *ip_video_source;
+    char   *ip_video_sps_source;
+    int64_t ip_video_udp_port_src;
+    int64_t ip_video_sps_udp_port_src;
     int64_t ip_video_payload_type;
+    int64_t ip_video_sps_payload_type;
     int64_t ip_video_width;
     int64_t ip_video_height;
     int64_t ip_video_framerate_num;
     int64_t ip_video_framerate_den;
     int64_t ip_video_interlaced;
     int64_t ip_video_bit_depth;
-    char   *ip_sdp_file;
+    char   *ip_video_sdp_file;
 } VideoMasterData;
 
 /**

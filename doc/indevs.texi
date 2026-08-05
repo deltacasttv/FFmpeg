@@ -1580,6 +1580,9 @@ UDP source port of the SPS ST2110 stream in explicit mode. Optional.
 @item ip_video_payload_type
 RTP video payload type of the main ST2110 stream in explicit mode. Optional. Default is 96.
 
+@item ip_video_sps_payload_type
+RTP video payload type of the SPS ST2110 stream in explicit mode. Optional. Default is 96.
+
 @item ip_video_width
 Video width for explicit ST2110 stream mode.
 
