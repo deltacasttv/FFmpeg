@@ -296,6 +296,27 @@ typedef struct VideoMasterContext
     VHD_SDP_MEDIA   ip_video_sdp_media[2];  ///< [0]=main stream, [1]=SPS stream
     ULONG           ip_video_sdp_media_count;
 
+    /* IP ST2110-30 audio essence fields. */
+    void    *ip_audio_stream_handle;
+    uint32_t ip_audio_destination;
+    uint32_t ip_audio_udp_port;
+    uint32_t ip_audio_source;
+    uint32_t ip_audio_udp_port_src;
+    uint32_t ip_audio_payload_type;
+    uint32_t ip_audio_sps_destination;
+    uint32_t ip_audio_sps_udp_port;
+    uint32_t ip_audio_sps_source;
+    uint32_t ip_audio_sps_udp_port_src;
+    uint32_t ip_audio_sps_payload_type;
+    uint32_t                  ip_audio_channel_index;
+    VHD_ST2110_30_FORMAT      ip_audio_format;
+    VHD_ST2110_30_PACKET_TIME ip_audio_packet_time;
+    bool            ip_audio_sdp_mode;
+    VHD_SDP_MEDIA   ip_audio_sdp_media;  ///< parsed audio SDP entry (SSM source filter included)
+    void    *ip_sync_handle;
+    bool     ip_sync_mode;  ///< true when video+audio synced via StreamSyncHandle
+    void    *ip_audio_slot_handle;  ///< locked slot for audio-only / non-sync path
+
     AVPacket *pending_packet;  ///< audio packet buffered from the current slot
     float ltc_frame_rate;   ///< frame rate for LTC timestamp calculation
 
@@ -372,6 +393,23 @@ typedef struct VideoMasterData
     int64_t ip_video_interlaced;
     int64_t ip_video_bit_depth;
     char   *ip_video_sdp_file;
+
+    /* Audio IP ST2110-30 options */
+    char   *ip_audio_destination;
+    int64_t ip_audio_udp_port;
+    char   *ip_audio_source;
+    int64_t ip_audio_udp_port_src;
+    int64_t ip_audio_payload_type;
+    char   *ip_audio_sps_destination;
+    int64_t ip_audio_sps_udp_port;
+    char   *ip_audio_sps_source;
+    int64_t ip_audio_sps_udp_port_src;
+    int64_t ip_audio_sps_payload_type;
+    char   *ip_audio_sdp_file;
+    int64_t ip_audio_nb_channels;
+    int64_t ip_audio_packet_time;
+    int64_t ip_audio_format;
+    int64_t ip_sync;
 } VideoMasterData;
 
 /**

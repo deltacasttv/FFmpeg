@@ -48,6 +48,36 @@
 /* ---- Private helpers ---- */
 
 /**
+ * @brief   Parses an IPv4 address string in dotted decimal notation and
+ * converts it to a 32-bit unsigned integer in host byte order.
+ *
+ * @param ip_string  IPv4 address string in dotted decimal notation (e.g.,
+ * "192.168.1.1").
+ * @param out_address Pointer to a 32-bit unsigned integer to receive the
+ * host-byte-order IPv4 address.
+ * @return int 0 on success, or negative AVERROR code on failure.
+ */
+static int parse_ipv4_address(const char *ip_string, uint32_t *out_address)
+{
+    unsigned int a = 0, b = 0, c = 0, d = 0;
+    char         tail = 0;
+
+    if (!ip_string || !out_address)
+        return AVERROR(EINVAL);
+
+    /* Exactly 4 items must match; tail captures any trailing character. */
+    if (sscanf(ip_string, "%u.%u.%u.%u%c", &a, &b, &c, &d, &tail) != 4 ||
+        tail != '\0')
+        return AVERROR(EINVAL);
+
+    if (a > 255 || b > 255 || c > 255 || d > 255)
+        return AVERROR(EINVAL);
+
+    *out_address = (a << 24) | (b << 16) | (c << 8) | d;
+    return 0;
+}
+
+/**
  * @brief Returns true when addr falls within the IPv4 multicast range
  *        (224.0.0.0/4 — first octet in [224, 239]).
  *
@@ -390,6 +420,97 @@ int ff_videomaster_parse_sdp_file(VideoMasterData    *videomaster_data,
 
 /* ---- Demuxer validation functions ---- */
 
+int ff_videomaster_parse_ip_essence_network(AVFormatContext    *avctx,
+                                            const char         *essence,
+                                            const IPEssenceIn  *in,
+                                            const IPEssenceOut *out)
+{
+    if (parse_ipv4_address(in->dst, out->dst) < 0)
+    {
+        av_log(avctx, AV_LOG_ERROR,
+               "Invalid IPv4 address for %s_destination: %s\n", essence,
+               in->dst);
+        return AVERROR(EINVAL);
+    }
+    if (in->sps_dst != NULL &&
+        parse_ipv4_address(in->sps_dst, out->sps_dst) < 0)
+    {
+        av_log(avctx, AV_LOG_ERROR,
+               "Invalid IPv4 address for %s_sps_destination: %s\n", essence,
+               in->sps_dst);
+        return AVERROR(EINVAL);
+    }
+    if (in->src != NULL && parse_ipv4_address(in->src, out->src) < 0)
+    {
+        av_log(avctx, AV_LOG_ERROR, "Invalid IPv4 address for %s_source: %s\n",
+               essence, in->src);
+        return AVERROR(EINVAL);
+    }
+    if (in->sps_src != NULL &&
+        parse_ipv4_address(in->sps_src, out->sps_src) < 0)
+    {
+        av_log(avctx, AV_LOG_ERROR,
+               "Invalid IPv4 address for %s_sps_source: %s\n", essence,
+               in->sps_src);
+        return AVERROR(EINVAL);
+    }
+    *out->udp_port = in->udp_port > 0 ? (uint32_t)in->udp_port : 0;
+    *out->sps_udp_port = in->sps_udp_port > 0 ? (uint32_t)in->sps_udp_port : 0;
+    *out->udp_port_src = in->udp_port_src > 0 ? (uint32_t)in->udp_port_src : 0;
+    *out->sps_udp_port_src = in->sps_udp_port_src > 0
+                                 ? (uint32_t)in->sps_udp_port_src
+                                 : 0;
+    *out->payload_type = in->payload_type > 0 ? (uint32_t)in->payload_type : 0;
+    *out->sps_payload_type = in->sps_payload_type > 0
+                                 ? (uint32_t)in->sps_payload_type
+                                 : 0;
+    return 0;
+}
+
+static int
+validate_audio_network_arguments(VideoMasterData    *videomaster_data,
+                                 VideoMasterContext *videomaster_context)
+{
+    if (videomaster_data->ip_audio_destination == NULL)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Argument ip_audio_destination is required for %s channels.\n",
+               ff_videomaster_channel_type_to_string(
+                   videomaster_context->channel_type));
+        return AVERROR(EINVAL);
+    }
+
+    CHECK_INT64_ARG_HAS_BEEN_SET(videomaster_context->avctx,
+                                 videomaster_data->ip_audio_udp_port,
+                                 "ip_audio_udp_port",
+                                 ff_videomaster_channel_type_to_string(
+                                     videomaster_context->channel_type));
+
+    if (videomaster_data->ip_audio_sps_destination != NULL &&
+        videomaster_data->ip_audio_sps_udp_port < 0)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Argument ip_audio_sps_udp_port is required for %s channels "
+               "when ip_audio_sps_destination is set.\n",
+               ff_videomaster_channel_type_to_string(
+                   videomaster_context->channel_type));
+        return AVERROR(EINVAL);
+    }
+
+    if (videomaster_data->ip_audio_sps_udp_port > 0 &&
+        videomaster_data->ip_audio_sps_destination == NULL)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Argument ip_audio_sps_destination is required for %s channels "
+               "when ip_audio_sps_udp_port is set.\n",
+               ff_videomaster_channel_type_to_string(
+                   videomaster_context->channel_type));
+        return AVERROR(EINVAL);
+    }
+
+    return 0;
+}
+
 int ff_videomaster_validate_arguments_ip(
     VideoMasterData *videomaster_data, VideoMasterContext *videomaster_context)
 {
@@ -411,87 +532,89 @@ int ff_videomaster_validate_arguments_ip(
         return AVERROR(EINVAL);
     }
 
-    /* SDP mode: all fields are already populated from the file. */
-    if (videomaster_context->ip_video_sdp_mode)
-        return 0;
+    /* Validate video network + signal args in explicit mode. */
+    if (!videomaster_context->ip_video_sdp_mode &&
+        videomaster_data->ip_video_destination != NULL)
+    {
+        if (validate_network_arguments(videomaster_data, videomaster_context) !=
+                0 ||
+            validate_video_arguments(videomaster_data, videomaster_context) !=
+                0)
+            return AVERROR(EINVAL);
+    }
 
-    /* Explicit mode: validate mandatory network and video arguments. */
-    if (validate_network_arguments(videomaster_data, videomaster_context) !=
-            0 ||
-        validate_video_arguments(videomaster_data, videomaster_context) != 0)
-        return AVERROR(EINVAL);
+    /* Validate audio network args in explicit mode. */
+    if (!videomaster_context->ip_audio_sdp_mode &&
+        videomaster_data->ip_audio_destination != NULL)
+    {
+        if (validate_audio_network_arguments(videomaster_data,
+                                             videomaster_context) != 0)
+            return AVERROR(EINVAL);
+    }
+
     return 0;
 }
 
 int ff_videomaster_check_audio_properties_ip(
     VideoMasterContext *videomaster_context)
 {
-    av_log(videomaster_context->avctx, AV_LOG_TRACE,
-           "Audio options are ignored in MVP IP video mode.\n");
+    /* AVOption range enforcement covers format, packet_time and nb_channels. */
     return 0;
 }
 
 int ff_videomaster_check_channel_integrity_ip(
     VideoMasterContext *videomaster_context)
 {
-    /* IP 2110 mode requires explicit parameters (auto-detect not supported) */
-    videomaster_context->has_video = true;
+    bool has_video = videomaster_context->ip_video_sdp_mode ||
+                     videomaster_context->ip_video_destination != 0;
+    bool has_audio = videomaster_context->ip_audio_sdp_mode ||
+                     videomaster_context->ip_audio_destination != 0;
 
-    av_log(videomaster_context->avctx, AV_LOG_TRACE,
-           "IP 2110 %s stream properties: %ux%u@%u/%u %s\n",
-           videomaster_context->ip_video_sdp_mode ? "SDP" : "explicit",
-           videomaster_context->video_width, videomaster_context->video_height,
-           videomaster_context->video_frame_rate_num,
-           videomaster_context->video_frame_rate_den,
-           videomaster_context->video_interlaced ? "interlaced"
-                                                 : "progressive");
-
-    if (ff_videomaster_join_multicast_group(videomaster_context) != 0)
+    if (!has_video && !has_audio)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
-               "Failed to prepare IP board for main stream.\n");
-        return AVERROR(EIO);
+               "IP 2110: no video or audio stream configured.\n");
+        return AVERROR(EINVAL);
     }
 
-    /* VHD_OpenStreamHandle in JOINED mode is not supported for IP ST2110.
-     * Use VHD_OpenEssenceStreamHandle with VHD_ET_ST2110_20 instead. */
+    if (videomaster_context->ip_sync_mode && (!has_video || !has_audio))
     {
-        VHD_ERRORCODE open_status = (VHD_ERRORCODE)VHD_OpenEssenceStreamHandle(
-            videomaster_context->board_handle, VHD_ET_ST2110_20, VHD_RX_CHANNEL,
-            videomaster_context->channel_index, NULL,
-            &videomaster_context->stream_handle);
-
-        if (open_status == VHDERR_NOERROR)
-        {
-            av_log(videomaster_context->avctx, AV_LOG_TRACE,
-                   "IP ST2110-20 stream handle opened successfully.\n");
-            return 0;
-        }
-
-        /* Log the VHD error and channel availability at ERROR level so the
-         * caller does not need -loglevel debug to diagnose the failure. */
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
-               "Failed to open IP ST2110-20 stream handle on channel %u: "
-               "%s (VHD error %d), channel status: %s.\n",
-               videomaster_context->channel_index,
-               VHD_ERRORCODE_ToPrettyString(open_status), (int)open_status,
-               ff_videomaster_get_channel_status_ip(videomaster_context));
-
-        if (open_status == VHDERR_STREAMUSED ||
-            open_status == VHDERR_CHANNELUSED)
-        {
-            av_log(videomaster_context->avctx, AV_LOG_ERROR,
-                   "Channel %u is already opened by another process. "
-                   "Use 'ffmpeg -sources videomaster' to inspect channel "
-                   "availability.\n",
-                   videomaster_context->channel_index);
-            return AVERROR(EBUSY);
-        }
-
-        return AVERROR(EIO);
+               "ip_sync requires both ip_video_destination and "
+               "ip_audio_destination.\n");
+        return AVERROR(EINVAL);
     }
 
-    return 0;
+    videomaster_context->has_video = has_video;
+    videomaster_context->has_audio = has_audio;
+
+    if (has_video)
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "IP 2110 video (%s): %ux%u@%u/%u %s\n",
+               videomaster_context->ip_video_sdp_mode ? "SDP" : "explicit",
+               videomaster_context->video_width,
+               videomaster_context->video_height,
+               videomaster_context->video_frame_rate_num,
+               videomaster_context->video_frame_rate_den,
+               videomaster_context->video_interlaced ? "interlaced"
+                                                     : "progressive");
+    if (has_audio)
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "IP 2110 audio (%s): %u ch, %s, %s\n",
+               videomaster_context->ip_audio_sdp_mode ? "SDP" : "explicit",
+               videomaster_context->audio_nb_channels,
+               videomaster_context->ip_audio_format == VHD_ST2110_30_FORMAT_L24
+                   ? "L24"
+                   : "L16",
+               videomaster_context->ip_audio_packet_time ==
+                       VHD_ST2110_30_PACKETTIME_1MS
+                   ? "1ms"
+                   : "125us");
+    if (has_video && has_audio)
+        av_log(videomaster_context->avctx, AV_LOG_TRACE, "IP 2110 sync: %s\n",
+               videomaster_context->ip_sync_mode ? "enabled" : "disabled");
+
+    return ff_videomaster_open_stream_ip(videomaster_context);
 }
 
 bool ff_videomaster_is_channel_locked_ip(
@@ -803,11 +926,17 @@ static int set_buffer_packing_and_codec(VideoMasterContext *ctx)
     return 0;
 }
 
-int ff_videomaster_start_stream_ip(VideoMasterContext *videomaster_context)
+int ff_videomaster_start_video_stream_ip(
+    VideoMasterContext *videomaster_context)
 {
     int   av_error = 0;
     ULONG filtering_mask = 0;
     bool  has_sps = videomaster_context->ip_video_sps_destination != 0;
+
+    /* Audio-only: video stream handle was never opened; nothing to configure.
+     */
+    if (!videomaster_context->has_video)
+        return 0;
 
     /* In explicit mode, ip_video_standard is not yet resolved */
     if (!videomaster_context->ip_video_sdp_mode)
@@ -1009,25 +1138,447 @@ int ff_videomaster_start_stream_ip(VideoMasterContext *videomaster_context)
     return set_buffer_packing_and_codec(videomaster_context);
 }
 
+int ff_videomaster_start_stream_ip(VideoMasterContext *videomaster_context)
+{
+    int av_error = 0;
+
+    int ret = ff_videomaster_start_video_stream_ip(videomaster_context);
+    if (ret != 0)
+        return ret;
+    ret = ff_videomaster_start_audio_stream_ip(videomaster_context);
+    if (ret != 0)
+        return ret;
+
+    /* Sync handle must be created after all stream properties are configured.
+     */
+    if (videomaster_context->ip_sync_mode)
+    {
+        GET_AND_CHECK(
+            ff_videomaster_handle_vhd_status, videomaster_context->avctx,
+            videomaster_context->avctx,
+            VHD_OpenStreamSyncHandle(VHD_RX_CHANNEL, 500,
+                                     &videomaster_context->ip_sync_handle),
+            "ST2110 sync handle opened", "Failed to open ST2110 sync handle");
+        GET_AND_CHECK(
+            ff_videomaster_handle_vhd_status, videomaster_context->avctx,
+            videomaster_context->avctx,
+            VHD_SetStreamSyncMainStream(videomaster_context->ip_sync_handle,
+                                        videomaster_context->stream_handle),
+            "Video set as sync main stream",
+            "Failed to set video as sync main stream");
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status,
+                      videomaster_context->avctx, videomaster_context->avctx,
+                      VHD_AddStreamSyncSecondaryStream(
+                          videomaster_context->ip_sync_handle,
+                          videomaster_context->ip_audio_stream_handle),
+                      "Audio added as sync secondary stream",
+                      "Failed to add audio as sync secondary stream");
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "StreamSync handle created (video main + audio secondary).\n");
+    }
+
+    return 0;
+}
+
 int ff_videomaster_lock_next_slot_ip(VideoMasterContext *ctx,
                                      uint8_t **video_buf, uint32_t *video_size,
                                      uint8_t **audio_buf, uint32_t *audio_size,
-                                     void    **slot_to_unlock)
+                                     void **slot_to_unlock)
 {
-    /* Phase 3 will implement sync-handle and audio-essence paths */
-    int ret = ff_videomaster_get_data(ctx);
-    if (ret != 0)
-        return ret;
-    *video_buf      = ctx->video_buffer;
-    *video_size     = ctx->video_buffer_size;
-    *audio_buf      = ctx->audio_buffer;
-    *audio_size     = ctx->audio_buffer_size;
-    *slot_to_unlock = ctx->slot_handle;
-    return 0;
+    int av_error = 0;
+
+    *video_buf = NULL;
+    *video_size = 0;
+    *audio_buf = NULL;
+    *audio_size = 0;
+    *slot_to_unlock = NULL;
+
+    if (ctx->ip_sync_mode)
+    {
+        /* Lock the sync slot — it covers both essences */
+        void *sync_slot = NULL;
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
+                      VHD_LockSlotHandle(ctx->ip_sync_handle, &sync_slot),
+                      "Sync slot locked", "Failed to lock sync slot");
+
+        void *video_sub = NULL, *audio_sub = NULL;
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
+                      VHD_StreamSyncGetSlotHandle(sync_slot, ctx->stream_handle,
+                                                  &video_sub),
+                      "", "Failed to get video sub-slot");
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
+                      VHD_StreamSyncGetSlotHandle(sync_slot,
+                                                  ctx->ip_audio_stream_handle,
+                                                  &audio_sub),
+                      "", "Failed to get audio sub-slot");
+
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
+                      VHD_GetSlotBuffer(video_sub, VHD_ST2110_BT_VIDEO,
+                                        (BYTE **)video_buf, video_size),
+                      "", "Failed to get video buffer from sub-slot");
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
+                      VHD_GetSlotBuffer(audio_sub, VHD_ST2110_BT_AUDIO,
+                                        (BYTE **)audio_buf, audio_size),
+                      "", "Failed to get audio buffer from sub-slot");
+
+        *slot_to_unlock = sync_slot;
+        return 0;
+    }
+
+    if (ctx->has_video && !ctx->has_audio)
+    {
+        /* video-only: use existing path via ff_videomaster_get_data */
+        int ret = ff_videomaster_get_data(ctx);
+        if (ret != 0)
+            return ret;
+        *video_buf = ctx->video_buffer;
+        *video_size = ctx->video_buffer_size;
+        *slot_to_unlock = ctx->slot_handle;
+        return 0;
+    }
+
+    if (!ctx->has_video && ctx->has_audio)
+    {
+        /* audio-only: lock the audio essence handle directly */
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
+                      VHD_LockSlotHandle(ctx->ip_audio_stream_handle,
+                                         &ctx->ip_audio_slot_handle),
+                      "Audio slot locked", "Failed to lock audio slot");
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
+                      VHD_GetSlotBuffer(ctx->ip_audio_slot_handle,
+                                        VHD_ST2110_BT_AUDIO, (BYTE **)audio_buf,
+                                        audio_size),
+                      "", "Failed to get audio buffer");
+        *slot_to_unlock = ctx->ip_audio_slot_handle;
+        return 0;
+    }
+
+    /* non-sync video+audio: lock each essence independently (no timing guarantee) */
+    {
+        int ret = ff_videomaster_get_data(ctx);
+        if (ret != 0)
+            return ret;
+        *video_buf = ctx->video_buffer;
+        *video_size = ctx->video_buffer_size;
+
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
+                      VHD_LockSlotHandle(ctx->ip_audio_stream_handle,
+                                         &ctx->ip_audio_slot_handle),
+                      "Audio slot locked", "Failed to lock audio slot");
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
+                      VHD_GetSlotBuffer(ctx->ip_audio_slot_handle,
+                                        VHD_ST2110_BT_AUDIO,
+                                        (BYTE **)audio_buf, audio_size),
+                      "", "Failed to get audio buffer");
+        *slot_to_unlock = NULL;
+        return 0;
+    }
 }
 
 int ff_videomaster_unlock_slot_ip(VideoMasterContext *ctx, void *slot)
 {
-    (void)slot;
-    return ff_videomaster_release_data(ctx);
+    if (ctx->ip_sync_mode)
+    {
+        /* unlock the sync slot — frees both sub-slots */
+        return ff_videomaster_handle_vhd_status(ctx->avctx,
+                                                VHD_UnlockSlotHandle(slot), "",
+                                                "Failed to unlock sync slot");
+    }
+
+    if (ctx->has_video && !ctx->has_audio)
+        return ff_videomaster_release_data(ctx);
+
+    if (!ctx->has_video && ctx->has_audio)
+    {
+        /* audio-only: just unlock, no av_malloc'd buffer to free */
+        int ret = ff_videomaster_handle_vhd_status(
+            ctx->avctx, VHD_UnlockSlotHandle(slot), "",
+            "Failed to unlock audio slot");
+        ctx->ip_audio_slot_handle = NULL;
+        return ret;
+    }
+
+    /* non-sync video+audio: release both slots independently */
+    {
+        int ret = ff_videomaster_release_data(ctx);
+        int ret2 = ff_videomaster_handle_vhd_status(
+            ctx->avctx, VHD_UnlockSlotHandle(ctx->ip_audio_slot_handle),
+            "", "Failed to unlock audio slot");
+        ctx->ip_audio_slot_handle = NULL;
+        return ret != 0 ? ret : ret2;
+    }
+}
+
+int ff_videomaster_parse_audio_sdp_file(VideoMasterData    *videomaster_data,
+                                        VideoMasterContext *videomaster_context)
+{
+    const char     *path = videomaster_data->ip_audio_sdp_file;
+    uint8_t        *buf = NULL;
+    size_t          buf_size = 0;
+    VHD_SDP_SESSION session;
+    VHD_SDP_MEDIA   media_array[VHD_SDP_MAX_MEDIA_COUNT];
+    ULONG           media_count = VHD_SDP_MAX_MEDIA_COUNT;
+    ULONG           vhd_status;
+    int             ret;
+
+    ret = av_file_map(path, &buf, &buf_size, 0, videomaster_context->avctx);
+    if (ret < 0)
+    {
+        if (ret == AVERROR(ENOENT))
+            av_log(videomaster_context->avctx, AV_LOG_ERROR,
+                   "Audio SDP file not found: %s\n", path);
+        return ret;
+    }
+
+    vhd_status = VHD_ReadSDP((const char *)buf, (ULONG)buf_size, &session,
+                             media_array, &media_count);
+    av_file_unmap(buf, buf_size);
+
+    if (vhd_status != VHDERR_NOERROR || media_count < 1)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Failed to parse audio SDP file '%s'.\n", path);
+        return AVERROR(EINVAL);
+    }
+
+    if (media_array[0].MediaType != VHD_SDP_MEDIA_TYPE_ST2110_30)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "First media entry in audio SDP '%s' is not ST2110-30.\n", path);
+        return AVERROR(EINVAL);
+    }
+
+    if (media_array[0].DestinationIP.Version != VHD_SDP_IP_VERSION_4)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "IPv6 not supported in audio SDP '%s'.\n", path);
+        return AVERROR(EINVAL);
+    }
+
+    const VHD_SDP_ESSENCE_ST2110_30 *a = &media_array[0].ST2110_30;
+    videomaster_context->ip_audio_sdp_mode = true;
+    videomaster_context->ip_audio_sdp_media = media_array[0];
+    videomaster_context->ip_audio_destination = sdp_ip_to_uint32(
+        &media_array[0].DestinationIP);
+    videomaster_context->ip_audio_udp_port = (uint32_t)media_array[0].UdpPort;
+    videomaster_context->ip_audio_payload_type =
+        (uint32_t)media_array[0].PayloadType;
+    videomaster_context->ip_audio_format = a->Format;
+    videomaster_context->ip_audio_packet_time = a->PacketTime;
+    videomaster_context->audio_nb_channels = (uint32_t)a->ChannelCount;
+    videomaster_context->audio_sample_rate = 48000;
+    videomaster_context->audio_sample_size =
+        (a->Format == VHD_ST2110_30_FORMAT_L24) ? AV_VIDEOMASTER_SAMPLE_SIZE_24
+                                                : AV_VIDEOMASTER_SAMPLE_SIZE_16;
+    videomaster_context->audio_codec = (a->Format == VHD_ST2110_30_FORMAT_L24)
+                                           ? AV_CODEC_ID_PCM_S24LE
+                                           : AV_CODEC_ID_PCM_S16LE;
+    videomaster_context->ip_audio_channel_index =
+        videomaster_context->channel_index;
+
+    if (!ip_is_multicast(videomaster_context->ip_audio_destination) &&
+        session.SourceIP.Version == VHD_SDP_IP_VERSION_4 &&
+        session.SourceIP.AddressV4 != 0)
+        videomaster_context->ip_audio_source = sdp_ip_to_uint32(
+            &session.SourceIP);
+
+    return 0;
+}
+
+int ff_videomaster_open_stream_ip(VideoMasterContext *ctx)
+{
+    if (ctx->has_video)
+    {
+        int ret = ff_videomaster_open_video_stream_ip(ctx);
+        if (ret != 0)
+            return ret;
+    }
+    if (ctx->has_audio)
+    {
+        int ret = ff_videomaster_open_audio_stream_ip(ctx);
+        if (ret != 0)
+            return ret;
+    }
+    return 0;
+}
+
+int ff_videomaster_open_video_stream_ip(VideoMasterContext *ctx)
+{
+    if (ff_videomaster_join_multicast_group(ctx) != 0)
+    {
+        av_log(ctx->avctx, AV_LOG_ERROR,
+               "Failed to prepare IP board for video stream.\n");
+        return AVERROR(EIO);
+    }
+
+    VHD_ERRORCODE open_status = (VHD_ERRORCODE)VHD_OpenEssenceStreamHandle(
+        ctx->board_handle, VHD_ET_ST2110_20, VHD_RX_CHANNEL, ctx->channel_index,
+        NULL, &ctx->stream_handle);
+
+    if (open_status != VHDERR_NOERROR)
+    {
+        av_log(ctx->avctx, AV_LOG_ERROR,
+               "Failed to open IP ST2110-20 stream handle on channel %u: "
+               "%s (VHD error %d), channel status: %s.\n",
+               ctx->channel_index, VHD_ERRORCODE_ToPrettyString(open_status),
+               (int)open_status, ff_videomaster_get_channel_status_ip(ctx));
+        if (open_status == VHDERR_STREAMUSED ||
+            open_status == VHDERR_CHANNELUSED)
+            return AVERROR(EBUSY);
+        return AVERROR(EIO);
+    }
+    av_log(ctx->avctx, AV_LOG_TRACE,
+           "IP ST2110-20 stream handle opened successfully.\n");
+    return 0;
+}
+
+int ff_videomaster_open_audio_stream_ip(VideoMasterContext *ctx)
+{
+    int av_error = 0;
+
+    /* Join audio multicast, applying SSM source filter from SDP when present */
+    if (ctx->ip_audio_sdp_mode)
+    {
+        if (ip_is_multicast(ctx->ip_audio_destination))
+        {
+            GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx,
+                          ctx->avctx,
+                          VHD_SetMulticastVersion(ctx->board_handle,
+                                                  VHD_IP_BRD_IGMP_VERSION_V3),
+                          "Configured IGMPv3 for audio",
+                          "Failed to configure IGMPv3 for audio");
+        }
+        GET_AND_CHECK(join_multicast_group_sdp_entry, ctx->avctx, ctx,
+                      &ctx->ip_audio_sdp_media, VHD_IP_BRD_ETHERNETPORT_ETH_0);
+    }
+    else if (ip_is_multicast(ctx->ip_audio_destination))
+    {
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
+                      VHD_SetMulticastVersion(ctx->board_handle,
+                                              VHD_IP_BRD_IGMP_VERSION_V3),
+                      "Configured IGMPv3 for audio",
+                      "Failed to configure IGMPv3 for audio");
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
+                      VHD_JoinMulticastGroup(ctx->board_handle,
+                                             VHD_IP_BRD_ETHERNETPORT_ETH_0,
+                                             ctx->ip_audio_destination),
+                      "Joined audio multicast group",
+                      "Failed to join audio multicast group");
+    }
+
+    /* Open audio essence stream handle */
+    VHD_ERRORCODE open_status = (VHD_ERRORCODE)VHD_OpenEssenceStreamHandle(
+        ctx->board_handle, VHD_ET_ST2110_30, VHD_RX_CHANNEL,
+        ctx->ip_audio_channel_index, NULL, &ctx->ip_audio_stream_handle);
+    if (open_status != VHDERR_NOERROR)
+    {
+        av_log(ctx->avctx, AV_LOG_ERROR,
+               "Failed to open ST2110-30 audio stream handle: %s\n",
+               VHD_ERRORCODE_ToPrettyString(open_status));
+        return AVERROR(EIO);
+    }
+
+    av_log(ctx->avctx, AV_LOG_TRACE,
+           "IP ST2110-30 audio stream handle opened successfully.\n");
+    return 0;
+}
+
+int ff_videomaster_start_audio_stream_ip(VideoMasterContext *ctx)
+{
+    int av_error = 0;
+
+    if (!ctx->has_audio)
+        return 0;
+
+    /* Buffer queue */
+    VHD_SetStreamProperty(ctx->ip_audio_stream_handle,
+                          VHD_CORE_SP_BUFFERQUEUE_DEPTH, 4);
+
+    /* Network filters */
+    VHD_SetStreamProperty(ctx->ip_audio_stream_handle, VHD_ST2110_SP_IP_DST,
+                          ctx->ip_audio_destination);
+    if (ctx->ip_audio_udp_port > 0)
+        VHD_SetStreamProperty(ctx->ip_audio_stream_handle,
+                              VHD_ST2110_SP_UDP_PORT_DST,
+                              ctx->ip_audio_udp_port);
+    if (ctx->ip_audio_source != 0)
+        VHD_SetStreamProperty(ctx->ip_audio_stream_handle, VHD_ST2110_SP_IP_SRC,
+                              ctx->ip_audio_source);
+    if (ctx->ip_audio_payload_type > 0)
+        VHD_SetStreamProperty(ctx->ip_audio_stream_handle,
+                              VHD_ST2110_SP_RTP_PAYLOAD_TYPE,
+                              ctx->ip_audio_payload_type);
+
+    /* Audio signal properties */
+    VHD_SetStreamProperty(ctx->ip_audio_stream_handle, VHD_ST2110_30_SP_FORMAT,
+                          (ULONG)ctx->ip_audio_format);
+    VHD_SetStreamProperty(ctx->ip_audio_stream_handle,
+                          VHD_ST2110_30_SP_SAMPLING_RATE,
+                          VHD_ST2110_30_SAMPLINGRATE_48KHZ);
+    VHD_SetStreamProperty(ctx->ip_audio_stream_handle,
+                          VHD_ST2110_30_SP_NB_CHANNELS, ctx->audio_nb_channels);
+    VHD_SetStreamProperty(ctx->ip_audio_stream_handle,
+                          VHD_ST2110_30_SP_PACKET_TIME,
+                          (ULONG)ctx->ip_audio_packet_time);
+    /* slot duration: 40ms in sync mode, 20ms standalone */
+    VHD_SetStreamProperty(ctx->ip_audio_stream_handle,
+                          VHD_ST2110_30_SP_SLOT_DURATION,
+                          ctx->ip_sync_mode ? 40 : 20);
+
+    av_log(ctx->avctx, AV_LOG_TRACE,
+           "ST2110-30 audio stream configured: %u ch, %s, %s\n",
+           ctx->audio_nb_channels,
+           ctx->ip_audio_format == VHD_ST2110_30_FORMAT_L24 ? "L24" : "L16",
+           ctx->ip_audio_packet_time == VHD_ST2110_30_PACKETTIME_1MS ? "1ms"
+                                                                     : "125us");
+
+    return 0;
+}
+
+int ff_videomaster_close_streams_ip(VideoMasterContext *ctx)
+{
+    /* Close sync handle first */
+    if (ctx->ip_sync_handle)
+    {
+        ff_videomaster_handle_vhd_status(
+            ctx->avctx, VHD_CloseStreamHandle(ctx->ip_sync_handle),
+            "Sync handle closed", "Failed to close sync handle");
+        ctx->ip_sync_handle = NULL;
+    }
+
+    /* Close audio essence handle */
+    if (ctx->ip_audio_stream_handle)
+    {
+        ff_videomaster_handle_vhd_status(ctx->avctx,
+                                         VHD_CloseStreamHandle(
+                                             ctx->ip_audio_stream_handle),
+                                         "Audio stream handle closed",
+                                         "Failed to close audio stream handle");
+        ctx->ip_audio_stream_handle = NULL;
+    }
+
+    /* Leave audio multicast groups */
+    if (ip_is_multicast(ctx->ip_audio_destination))
+    {
+        ff_videomaster_handle_vhd_status(
+            ctx->avctx,
+            VHD_LeaveMulticastGroup(ctx->board_handle,
+                                    VHD_IP_BRD_ETHERNETPORT_ETH_0,
+                                    ctx->ip_audio_destination),
+            "Left audio multicast group",
+            "Failed to leave audio multicast group");
+    }
+    if (ctx->ip_audio_sps_destination != 0 &&
+        ip_is_multicast(ctx->ip_audio_sps_destination))
+    {
+        ff_videomaster_handle_vhd_status(
+            ctx->avctx,
+            VHD_LeaveMulticastGroup(ctx->board_handle,
+                                    VHD_IP_BRD_ETHERNETPORT_ETH_1,
+                                    ctx->ip_audio_sps_destination),
+            "Left audio SPS multicast group",
+            "Failed to leave audio SPS multicast group");
+    }
+
+    return 0;
 }

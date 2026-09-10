@@ -149,15 +149,6 @@ static int handle_stream_error(VideoMasterContext *videomaster_context,
 static int parse_command_line_arguments(AVFormatContext *avctx);
 
 /**
- * @brief Parses an IPv4 address from dotted notation to a 32-bit value.
- *
- * @param ip_string IPv4 address in dotted notation (a.b.c.d)
- * @param out_address Pointer to store parsed 32-bit address
- * @return int  0 on success, or negative AVERROR code on failure
- */
-static int parse_ipv4_address(const char *ip_string, uint32_t *out_address);
-
-/**
  * @brief  Sets up the FFmpeg audio stream based on the VideoMaster context
  *
  * This function configures the audio stream properties such as sample rate,
@@ -679,28 +670,39 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
                      videomaster_data->ip_video_interlaced >= 0 &&
                      videomaster_data->ip_video_bit_depth > 0)
             {
-                if (parse_ipv4_address(
-                        videomaster_data->ip_video_destination,
-                        &videomaster_context->ip_video_destination) < 0)
-                {
-                    av_log(
-                        avctx, AV_LOG_ERROR,
-                        "Invalid IPv4 address for ip_video_destination: %s\n",
-                        videomaster_data->ip_video_destination);
-                    return AVERROR(EINVAL);
-                }
-
-                if (videomaster_data->ip_video_sps_destination != NULL &&
-                    parse_ipv4_address(
-                        videomaster_data->ip_video_sps_destination,
-                        &videomaster_context->ip_video_sps_destination) < 0)
-                {
-                    av_log(avctx, AV_LOG_ERROR,
-                           "Invalid IPv4 address for ip_video_sps_destination: "
-                           "%s\n",
-                           videomaster_data->ip_video_sps_destination);
-                    return AVERROR(EINVAL);
-                }
+                const IPEssenceIn vin = {
+                    .dst = videomaster_data->ip_video_destination,
+                    .sps_dst = videomaster_data->ip_video_sps_destination,
+                    .src = videomaster_data->ip_video_source,
+                    .sps_src = videomaster_data->ip_video_sps_source,
+                    .udp_port = videomaster_data->ip_video_udp_port,
+                    .sps_udp_port = videomaster_data->ip_video_sps_udp_port,
+                    .udp_port_src = videomaster_data->ip_video_udp_port_src,
+                    .sps_udp_port_src =
+                        videomaster_data->ip_video_sps_udp_port_src,
+                    .payload_type = videomaster_data->ip_video_payload_type,
+                    .sps_payload_type =
+                        videomaster_data->ip_video_sps_payload_type,
+                };
+                const IPEssenceOut vout = {
+                    .dst = &videomaster_context->ip_video_destination,
+                    .sps_dst = &videomaster_context->ip_video_sps_destination,
+                    .src = &videomaster_context->ip_video_source,
+                    .sps_src = &videomaster_context->ip_video_sps_source,
+                    .udp_port = &videomaster_context->ip_video_udp_port,
+                    .sps_udp_port = &videomaster_context->ip_video_sps_udp_port,
+                    .udp_port_src = &videomaster_context->ip_video_udp_port_src,
+                    .sps_udp_port_src =
+                        &videomaster_context->ip_video_sps_udp_port_src,
+                    .payload_type = &videomaster_context->ip_video_payload_type,
+                    .sps_payload_type =
+                        &videomaster_context->ip_video_sps_payload_type,
+                };
+                int ret = ff_videomaster_parse_ip_essence_network(avctx,
+                                                                  "ip_video",
+                                                                  &vin, &vout);
+                if (ret < 0)
+                    return ret;
 
                 if (videomaster_data->ip_video_bit_depth != 8 &&
                     videomaster_data->ip_video_bit_depth != 10)
@@ -712,53 +714,6 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
                     return AVERROR(EINVAL);
                 }
 
-                videomaster_context->ip_video_udp_port =
-                    videomaster_data->ip_video_udp_port > 0
-                        ? (uint32_t)videomaster_data->ip_video_udp_port
-                        : 0;
-                videomaster_context->ip_video_sps_udp_port =
-                    videomaster_data->ip_video_sps_udp_port > 0
-                        ? (uint32_t)videomaster_data->ip_video_sps_udp_port
-                        : 0;
-
-                if (videomaster_data->ip_video_source != NULL &&
-                    parse_ipv4_address(videomaster_data->ip_video_source,
-                                       &videomaster_context->ip_video_source) <
-                        0)
-                {
-                    av_log(avctx, AV_LOG_ERROR,
-                           "Invalid IPv4 address for ip_video_source: %s\n",
-                           videomaster_data->ip_video_source);
-                    return AVERROR(EINVAL);
-                }
-
-                if (videomaster_data->ip_video_sps_source != NULL &&
-                    parse_ipv4_address(
-                        videomaster_data->ip_video_sps_source,
-                        &videomaster_context->ip_video_sps_source) < 0)
-                {
-                    av_log(avctx, AV_LOG_ERROR,
-                           "Invalid IPv4 address for ip_video_sps_source: %s\n",
-                           videomaster_data->ip_video_sps_source);
-                    return AVERROR(EINVAL);
-                }
-
-                videomaster_context->ip_video_udp_port_src =
-                    videomaster_data->ip_video_udp_port_src > 0
-                        ? (uint32_t)videomaster_data->ip_video_udp_port_src
-                        : 0;
-                videomaster_context->ip_video_sps_udp_port_src =
-                    videomaster_data->ip_video_sps_udp_port_src > 0
-                        ? (uint32_t)videomaster_data->ip_video_sps_udp_port_src
-                        : 0;
-                videomaster_context->ip_video_payload_type =
-                    videomaster_data->ip_video_payload_type > 0
-                        ? (uint32_t)videomaster_data->ip_video_payload_type
-                        : 0;
-                videomaster_context->ip_video_sps_payload_type =
-                    videomaster_data->ip_video_sps_payload_type > 0
-                        ? (uint32_t)videomaster_data->ip_video_sps_payload_type
-                        : 0;
                 videomaster_context->video_width =
                     (uint32_t)videomaster_data->ip_video_width;
                 videomaster_context->video_height =
@@ -865,30 +820,107 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
         }
     }
 
-    return 0;
-}
+    /* ---- Audio IP ST2110-30 parsing ---- */
+    {
+        bool has_audio_explicit = videomaster_data->ip_audio_destination !=
+                                  NULL;
+        bool has_audio_sdp = videomaster_data->ip_audio_sdp_file != NULL;
 
-static int parse_ipv4_address(const char *ip_string, uint32_t *out_address)
-{
-    unsigned int a = 0;
-    unsigned int b = 0;
-    unsigned int c = 0;
-    unsigned int d = 0;
-    char         tail = 0;
+        if (has_audio_explicit && has_audio_sdp)
+        {
+            av_log(avctx, AV_LOG_ERROR,
+                   "ip_audio_destination and ip_audio_sdp_file are mutually "
+                   "exclusive.\n");
+            return AVERROR(EINVAL);
+        }
 
-    if (!ip_string || !out_address)
-        return AVERROR(EINVAL);
+        if (has_audio_sdp)
+        {
+            int ret = ff_videomaster_parse_audio_sdp_file(videomaster_data,
+                                                          videomaster_context);
+            if (ret < 0)
+                return ret;
+        }
+        else if (has_audio_explicit)
+        {
+            const IPEssenceIn ain = {
+                .dst = videomaster_data->ip_audio_destination,
+                .sps_dst = videomaster_data->ip_audio_sps_destination,
+                .src = videomaster_data->ip_audio_source,
+                .sps_src = videomaster_data->ip_audio_sps_source,
+                .udp_port = videomaster_data->ip_audio_udp_port,
+                .sps_udp_port = videomaster_data->ip_audio_sps_udp_port,
+                .udp_port_src = videomaster_data->ip_audio_udp_port_src,
+                .sps_udp_port_src = videomaster_data->ip_audio_sps_udp_port_src,
+                .payload_type = videomaster_data->ip_audio_payload_type,
+                .sps_payload_type = videomaster_data->ip_audio_sps_payload_type,
+            };
+            const IPEssenceOut aout = {
+                .dst = &videomaster_context->ip_audio_destination,
+                .sps_dst = &videomaster_context->ip_audio_sps_destination,
+                .src = &videomaster_context->ip_audio_source,
+                .sps_src = &videomaster_context->ip_audio_sps_source,
+                .udp_port = &videomaster_context->ip_audio_udp_port,
+                .sps_udp_port = &videomaster_context->ip_audio_sps_udp_port,
+                .udp_port_src = &videomaster_context->ip_audio_udp_port_src,
+                .sps_udp_port_src =
+                    &videomaster_context->ip_audio_sps_udp_port_src,
+                .payload_type = &videomaster_context->ip_audio_payload_type,
+                .sps_payload_type =
+                    &videomaster_context->ip_audio_sps_payload_type,
+            };
+            int ret = ff_videomaster_parse_ip_essence_network(avctx, "ip_audio",
+                                                              &ain, &aout);
+            if (ret < 0)
+                return ret;
+        }
 
-    /* Exactly 4 items must match; tail captures any trailing character.
-     * If sscanf returns 5, there are extra characters after the address. */
-    if (sscanf(ip_string, "%u.%u.%u.%u%c", &a, &b, &c, &d, &tail) != 4 ||
-        tail != '\0')
-        return AVERROR(EINVAL);
+        if (has_audio_explicit || has_audio_sdp)
+        {
+            if (videomaster_data->ip_audio_nb_channels < 1 ||
+                videomaster_data->ip_audio_nb_channels > 64)
+            {
+                av_log(avctx, AV_LOG_ERROR,
+                       "ip_audio_nb_channels must be between 1 and 64.\n");
+                return AVERROR(EINVAL);
+            }
+            videomaster_context->ip_audio_format =
+                (VHD_ST2110_30_FORMAT)videomaster_data->ip_audio_format;
+            videomaster_context->ip_audio_packet_time =
+                (VHD_ST2110_30_PACKET_TIME)
+                    videomaster_data->ip_audio_packet_time;
+            videomaster_context->ip_audio_channel_index =
+                videomaster_context->channel_index;
+            videomaster_context->audio_nb_channels =
+                (uint32_t)videomaster_data->ip_audio_nb_channels;
+            videomaster_context->audio_sample_rate =
+                VIDEOMASTER_IP_AUDIO_SAMPLE_RATE;
+            videomaster_context->audio_sample_size =
+                (videomaster_data->ip_audio_format == VHD_ST2110_30_FORMAT_L24)
+                    ? AV_VIDEOMASTER_SAMPLE_SIZE_24
+                    : AV_VIDEOMASTER_SAMPLE_SIZE_16;
+            videomaster_context->audio_codec =
+                (videomaster_data->ip_audio_format == VHD_ST2110_30_FORMAT_L24)
+                    ? AV_CODEC_ID_PCM_S24LE
+                    : AV_CODEC_ID_PCM_S16LE;
+        }
 
-    if (a > 255 || b > 255 || c > 255 || d > 255)
-        return AVERROR(EINVAL);
+        /* Sync mode: requires both video and audio IP streams */
+        {
+            bool has_video_ip = videomaster_context->ip_video_destination !=
+                                    0 ||
+                                videomaster_context->ip_video_sdp_mode;
+            bool has_audio_ip = videomaster_context->ip_audio_destination !=
+                                    0 ||
+                                (has_audio_sdp &&
+                                 videomaster_context->ip_audio_destination !=
+                                     0);
+            videomaster_context->ip_sync_mode = has_video_ip && has_audio_ip &&
+                                                (videomaster_data->ip_sync !=
+                                                 0);
+        }
+    }
 
-    *out_address = (a << 24) | (b << 16) | (c << 8) | d;
     return 0;
 }
 
@@ -2027,6 +2059,183 @@ static const AVOption options[] = {
       0,
       0,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
+      NULL },
+    /* ---- Audio ST2110-30 ---- */
+    { "ip_audio_destination",
+      "IPv4 destination address for the ST2110-30 audio stream.",
+      OFFSET(ip_audio_destination),
+      AV_OPT_TYPE_STRING,
+      { .str = NULL },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
+      NULL },
+    { "ip_audio_sps_destination",
+      "IPv4 SPS (redundancy) destination address for the ST2110-30 audio "
+      "stream.",
+      OFFSET(ip_audio_sps_destination),
+      AV_OPT_TYPE_STRING,
+      { .str = NULL },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
+      NULL },
+    { "ip_audio_udp_port",
+      "UDP destination port for the ST2110-30 audio stream.",
+      OFFSET(ip_audio_udp_port),
+      AV_OPT_TYPE_INT64,
+      { .i64 = -1 },
+      -1,
+      65535,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
+      NULL },
+    { "ip_audio_sps_udp_port",
+      "UDP SPS destination port for the ST2110-30 audio stream.",
+      OFFSET(ip_audio_sps_udp_port),
+      AV_OPT_TYPE_INT64,
+      { .i64 = -1 },
+      -1,
+      65535,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
+      NULL },
+    { "ip_audio_source",
+      "IPv4 source address for RX filtering of the ST2110-30 audio stream. "
+      "Optional.",
+      OFFSET(ip_audio_source),
+      AV_OPT_TYPE_STRING,
+      { .str = NULL },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
+      NULL },
+    { "ip_audio_sps_source",
+      "IPv4 SPS source address for RX filtering. Optional.",
+      OFFSET(ip_audio_sps_source),
+      AV_OPT_TYPE_STRING,
+      { .str = NULL },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
+      NULL },
+    { "ip_audio_udp_port_src",
+      "UDP source port of the ST2110-30 audio stream. Optional.",
+      OFFSET(ip_audio_udp_port_src),
+      AV_OPT_TYPE_INT64,
+      { .i64 = -1 },
+      -1,
+      65535,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
+      NULL },
+    { "ip_audio_sps_udp_port_src",
+      "UDP SPS source port. Optional.",
+      OFFSET(ip_audio_sps_udp_port_src),
+      AV_OPT_TYPE_INT64,
+      { .i64 = -1 },
+      -1,
+      65535,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
+      NULL },
+    { "ip_audio_payload_type",
+      "RTP payload type for the ST2110-30 audio stream.",
+      OFFSET(ip_audio_payload_type),
+      AV_OPT_TYPE_INT64,
+      { .i64 = 97 },
+      0,
+      127,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
+      NULL },
+    { "ip_audio_sps_payload_type",
+      "RTP payload type for the ST2110-30 audio SPS (redundancy) stream.",
+      OFFSET(ip_audio_sps_payload_type),
+      AV_OPT_TYPE_INT64,
+      { .i64 = 97 },
+      0,
+      127,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
+      NULL },
+    { "ip_audio_nb_channels",
+      "Number of audio channels (1-64).",
+      OFFSET(ip_audio_nb_channels),
+      AV_OPT_TYPE_INT64,
+      { .i64 = 2 },
+      1,
+      64,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
+      NULL },
+    { "ip_audio_packet_time",
+      "RTP packet time for the ST2110-30 audio stream.",
+      OFFSET(ip_audio_packet_time),
+      AV_OPT_TYPE_INT64,
+      { .i64 = VHD_ST2110_30_PACKETTIME_1MS },
+      VHD_ST2110_30_PACKETTIME_1MS,
+      VHD_ST2110_30_PACKETTIME_125US,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
+      .unit = "ip_audio_packet_time_value" },
+    { "1ms",
+      NULL,
+      0,
+      AV_OPT_TYPE_CONST,
+      { .i64 = VHD_ST2110_30_PACKETTIME_1MS },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
+      .unit = "ip_audio_packet_time_value" },
+    { "125us",
+      NULL,
+      0,
+      AV_OPT_TYPE_CONST,
+      { .i64 = VHD_ST2110_30_PACKETTIME_125US },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
+      .unit = "ip_audio_packet_time_value" },
+    { "ip_audio_format",
+      "PCM sample format for the ST2110-30 audio stream.",
+      OFFSET(ip_audio_format),
+      AV_OPT_TYPE_INT64,
+      { .i64 = VHD_ST2110_30_FORMAT_L24 },
+      VHD_ST2110_30_FORMAT_L16,
+      VHD_ST2110_30_FORMAT_L24,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
+      .unit = "ip_audio_format_value" },
+    { "L16",
+      NULL,
+      0,
+      AV_OPT_TYPE_CONST,
+      { .i64 = VHD_ST2110_30_FORMAT_L16 },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
+      .unit = "ip_audio_format_value" },
+    { "L24",
+      NULL,
+      0,
+      AV_OPT_TYPE_CONST,
+      { .i64 = VHD_ST2110_30_FORMAT_L24 },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
+      .unit = "ip_audio_format_value" },
+    { "ip_audio_sdp_file",
+      "Path to a dedicated SDP file describing the ST2110-30 audio stream. "
+      "Mutually exclusive with ip_audio_destination.",
+      OFFSET(ip_audio_sdp_file),
+      AV_OPT_TYPE_STRING,
+      { .str = NULL },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
+      NULL },
+    { "ip_sync",
+      "Enable ST2110 stream synchronization (video+audio). Default on. "
+      "Disable for independent essence acquisition.",
+      OFFSET(ip_sync),
+      AV_OPT_TYPE_BOOL,
+      { .i64 = 1 },
+      0,
+      1,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM |
+          AV_OPT_FLAG_AUDIO_PARAM,
       NULL },
     { NULL },
 };

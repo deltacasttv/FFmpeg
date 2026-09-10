@@ -1515,21 +1515,15 @@ int ff_videomaster_reject_ip_params(VideoMasterData    *data,
 {
     const char *tech = ff_videomaster_channel_type_to_string(ctx->channel_type);
 
-    if (data->ip_video_destination      != NULL ||
-        data->ip_video_sps_destination  != NULL ||
-        data->ip_video_source           != NULL ||
-        data->ip_video_sps_source       != NULL ||
-        data->ip_video_sdp_file         != NULL ||
-        data->ip_video_udp_port         > 0     ||
-        data->ip_video_sps_udp_port     > 0     ||
-        data->ip_video_udp_port_src     > 0     ||
-        data->ip_video_sps_udp_port_src > 0     ||
-        data->ip_video_width            > 0     ||
-        data->ip_video_height           > 0     ||
-        data->ip_video_framerate_num    > 0     ||
-        data->ip_video_framerate_den    > 0     ||
-        data->ip_video_interlaced       >= 0    ||
-        data->ip_video_bit_depth        > 0)
+    if (data->ip_video_destination != NULL ||
+        data->ip_video_sps_destination != NULL ||
+        data->ip_video_source != NULL || data->ip_video_sps_source != NULL ||
+        data->ip_video_sdp_file != NULL || data->ip_video_udp_port > 0 ||
+        data->ip_video_sps_udp_port > 0 || data->ip_video_udp_port_src > 0 ||
+        data->ip_video_sps_udp_port_src > 0 || data->ip_video_width > 0 ||
+        data->ip_video_height > 0 || data->ip_video_framerate_num > 0 ||
+        data->ip_video_framerate_den > 0 || data->ip_video_interlaced >= 0 ||
+        data->ip_video_bit_depth > 0)
     {
         av_log(ctx->avctx, AV_LOG_ERROR,
                "ip_video_* arguments are not applicable for %s channels.\n",
@@ -2026,13 +2020,17 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
             return av_error;
     }
 
-    /* 3. Configure I/O timeout */
-    GET_AND_CHECK(ff_videomaster_handle_vhd_status, videomaster_context->avctx,
-                  videomaster_context->avctx,
-                  VHD_SetStreamProperty(videomaster_context->stream_handle,
-                                        VHD_CORE_SP_IO_TIMEOUT, 10000),
-                  "Stream time-out has been set to 10000ms",
-                  "Unable to set stream time-out");
+    /* 3. Configure I/O timeout (not applicable for IP — network-level timeout)
+     */
+    if (videomaster_context->channel_type != AV_VIDEOMASTER_CHANNEL_IP_2110)
+    {
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status,
+                      videomaster_context->avctx, videomaster_context->avctx,
+                      VHD_SetStreamProperty(videomaster_context->stream_handle,
+                                            VHD_CORE_SP_IO_TIMEOUT, 10000),
+                      "Stream time-out has been set to 10000ms",
+                      "Unable to set stream time-out");
+    }
 
     /* 4. Configure timestamp source */
     av_error = setup_timestamp_source(videomaster_context);
@@ -2040,10 +2038,21 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
         return av_error;
 
     /* 5. Start the stream */
-    GET_AND_CHECK(ff_videomaster_handle_vhd_status, videomaster_context->avctx,
-                  videomaster_context->avctx,
-                  VHD_StartStream(videomaster_context->stream_handle),
-                  "Stream started successfully", "Failed to start stream");
+    {
+        HANDLE start_handle = videomaster_context->stream_handle;
+        if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_IP_2110)
+        {
+            if (videomaster_context->ip_sync_mode)
+                start_handle = videomaster_context->ip_sync_handle;
+            else if (!videomaster_context->has_video &&
+                     videomaster_context->has_audio)
+                start_handle = videomaster_context->ip_audio_stream_handle;
+        }
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status,
+                      videomaster_context->avctx, videomaster_context->avctx,
+                      VHD_StartStream(start_handle),
+                      "Stream started successfully", "Failed to start stream");
+    }
 
     av_log(videomaster_context->avctx, AV_LOG_TRACE,
            "ff_videomaster_start_stream: OUT\n");
@@ -2058,7 +2067,21 @@ int ff_videomaster_stop_stream(VideoMasterContext *videomaster_context)
     enable_loopback_on_channel(videomaster_context);
 
     if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_IP_2110)
+    {
+        HANDLE stop_handle = videomaster_context->stream_handle;
+        if (videomaster_context->ip_sync_mode)
+            stop_handle = videomaster_context->ip_sync_handle;
+        else if (!videomaster_context->has_video &&
+                 videomaster_context->has_audio)
+            stop_handle = videomaster_context->ip_audio_stream_handle;
+
+        int ret = ff_videomaster_handle_vhd_status(
+            videomaster_context->avctx, VHD_StopStream(stop_handle),
+            "Stream stopped successfully", "Failed to stop stream");
         ff_videomaster_leave_multicast_group(videomaster_context);
+        ff_videomaster_close_streams_ip(videomaster_context);
+        return ret;
+    }
 
     return ff_videomaster_handle_vhd_status(
         videomaster_context->avctx,

@@ -27,6 +27,16 @@
 
 #include "videomaster_common.h"
 
+#if defined(__APPLE__)
+#include <VideoMasterHD/VideoMasterHD_Ip_ST2110_30.h>
+#include <VideoMasterHD/VideoMasterHD_Ip_ST2110_Sync.h>
+#else
+#include <VideoMasterHD_Ip_ST2110_30.h>
+#include <VideoMasterHD_Ip_ST2110_Sync.h>
+#endif
+
+#define VIDEOMASTER_IP_AUDIO_SAMPLE_RATE AV_VIDEOMASTER_SAMPLE_RATE_48000
+
 /**
  * @brief Validates command-line arguments for IP/ST2110 channels.
  *
@@ -43,12 +53,7 @@ int ff_videomaster_validate_arguments_ip(
     VideoMasterData *videomaster_data, VideoMasterContext *videomaster_context);
 
 /**
- * @brief Validates audio properties for IP/ST2110 channels.
- *
- * Confirms that audio options are ignored in IP mode (not applicable).
- *
- * @param videomaster_context The VideoMaster context.
- * @return 0 on success.
+ * @brief No-op for IP: AVOption range enforcement already covers audio params.
  */
 int ff_videomaster_check_audio_properties_ip(
     VideoMasterContext *videomaster_context);
@@ -144,6 +149,13 @@ int ff_videomaster_leave_multicast_group(
  * @param videomaster_context The VideoMaster context to use.
  * @return 0 on success, or negative AVERROR code on failure.
  */
+int ff_videomaster_start_video_stream_ip(
+    VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Configures both video and audio ST2110 stream properties.
+ * Symmetric counterpart to ff_videomaster_start_stream_sdi/hdmi.
+ */
 int ff_videomaster_start_stream_ip(VideoMasterContext *videomaster_context);
 
 /**
@@ -167,6 +179,41 @@ int ff_videomaster_parse_sdp_file(VideoMasterData    *videomaster_data,
                                   VideoMasterContext *videomaster_context);
 
 /**
+ * @brief Parses a dedicated audio SDP file (ST2110-30) into the context.
+ */
+int ff_videomaster_parse_audio_sdp_file(
+    VideoMasterData *videomaster_data, VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Opens and configures the video ST2110-20 stream handle.
+ * Joins video multicast and opens the essence handle.
+ */
+/** @brief Opens video and audio stream handles. Symmetric to
+ * ff_videomaster_start_stream_ip. */
+int ff_videomaster_open_stream_ip(VideoMasterContext *ctx);
+
+int ff_videomaster_open_video_stream_ip(VideoMasterContext *ctx);
+
+/**
+ * @brief Configures ST2110-30 audio stream properties (network filters and
+ * signal parameters). Must be called after ff_videomaster_open_audio_stream_ip.
+ */
+int ff_videomaster_start_audio_stream_ip(VideoMasterContext *ctx);
+
+/**
+ * @brief Opens and configures the audio ST2110-30 stream handle.
+ * Joins audio multicast, opens the essence handle and sets all stream
+ * properties. Creates the StreamSyncHandle when ip_sync_mode is true.
+ */
+int ff_videomaster_open_audio_stream_ip(VideoMasterContext *ctx);
+
+/**
+ * @brief Closes audio and sync handles, leaves audio multicast groups.
+ * Must be called before ff_videomaster_close_stream_handle (video).
+ */
+int ff_videomaster_close_streams_ip(VideoMasterContext *ctx);
+
+/**
  * @brief Locks the next slot and fills video/audio buffer pointers (IP).
  * @param slot_to_unlock Receives the slot handle to pass to unlock.
  * @return 0 on success, AVERROR(EAGAIN) on timeout, AVERROR(EIO) on failure.
@@ -174,9 +221,49 @@ int ff_videomaster_parse_sdp_file(VideoMasterData    *videomaster_data,
 int ff_videomaster_lock_next_slot_ip(VideoMasterContext *ctx,
                                      uint8_t **video_buf, uint32_t *video_size,
                                      uint8_t **audio_buf, uint32_t *audio_size,
-                                     void    **slot_to_unlock);
+                                     void **slot_to_unlock);
 
 /** @brief Unlocks the slot obtained from ff_videomaster_lock_next_slot_ip. */
 int ff_videomaster_unlock_slot_ip(VideoMasterContext *ctx, void *slot);
+/* ---- IP network parameter helpers ---- */
 
+/** Input fields from VideoMasterData for one IP essence (video or audio). */
+typedef struct IPEssenceIn
+{
+    const char *dst;
+    const char *sps_dst;
+    const char *src;
+    const char *sps_src;
+    int64_t     udp_port;
+    int64_t     sps_udp_port;
+    int64_t     udp_port_src;
+    int64_t     sps_udp_port_src;
+    int64_t     payload_type;
+    int64_t     sps_payload_type;
+} IPEssenceIn;
+
+/** Pointers to matching uint32_t fields in VideoMasterContext. */
+typedef struct IPEssenceOut
+{
+    uint32_t *dst;
+    uint32_t *sps_dst;
+    uint32_t *src;
+    uint32_t *sps_src;
+    uint32_t *udp_port;
+    uint32_t *sps_udp_port;
+    uint32_t *udp_port_src;
+    uint32_t *sps_udp_port_src;
+    uint32_t *payload_type;
+    uint32_t *sps_payload_type;
+} IPEssenceOut;
+
+/**
+ * @brief Parses and validates the network portion of one IP essence.
+ *
+ * essence ("ip_video" or "ip_audio") is used verbatim in error messages.
+ */
+int ff_videomaster_parse_ip_essence_network(AVFormatContext    *avctx,
+                                            const char         *essence,
+                                            const IPEssenceIn  *in,
+                                            const IPEssenceOut *out);
 #endif /* AVDEVICE_VIDEOMASTER_IP_H */
