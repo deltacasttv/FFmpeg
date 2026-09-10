@@ -799,15 +799,36 @@ static int setup_video_stream(VideoMasterContext *videomaster_context)
         av_stream->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
         av_stream->codecpar->width = videomaster_context->video_width;
         av_stream->codecpar->height = videomaster_context->video_height;
-        av_stream->time_base.den = videomaster_context->video_frame_rate_num;
-        av_stream->time_base.num = videomaster_context->video_frame_rate_den;
         av_stream->r_frame_rate =
             av_make_q(videomaster_context->video_frame_rate_num,
                       videomaster_context->video_frame_rate_den);
+        av_stream->avg_frame_rate = av_stream->r_frame_rate;
         av_stream->codecpar->bit_rate = videomaster_context->video_bit_rate;
         av_stream->codecpar->codec_id = videomaster_context->video_codec;
         av_stream->codecpar->format = videomaster_context->video_pixel_format;
         av_stream->codecpar->field_order = AV_FIELD_PROGRESSIVE;
+
+        /* Broadcast content is always limited (studio
+                                 swing) range. */
+        av_stream->codecpar->color_range = AVCOL_RANGE_MPEG;
+
+        /*
+         * Derive colour primaries / transfer / matrix from resolution.
+         * HD (height >= 720) uses BT.709; SD uses BT.601.
+         * This matches ITU-R BT.2081 and common broadcast practice.
+         */
+        if (videomaster_context->video_height >= 720)
+        {
+            av_stream->codecpar->color_primaries = AVCOL_PRI_BT709;
+            av_stream->codecpar->color_trc = AVCOL_TRC_BT709;
+            av_stream->codecpar->color_space = AVCOL_SPC_BT709;
+        }
+        else
+        {
+            av_stream->codecpar->color_primaries = AVCOL_PRI_BT470BG;
+            av_stream->codecpar->color_trc = AVCOL_TRC_BT709;
+            av_stream->codecpar->color_space = AVCOL_SPC_BT470BG;
+        }
 
         avpriv_set_pts_info(av_stream, 64, 1, 1000000); /* 64 bits pts in us */
 
