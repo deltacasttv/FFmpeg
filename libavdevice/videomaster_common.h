@@ -37,6 +37,10 @@
 #include <VideoMasterHD/VideoMasterHD_Core.h>
 #include <VideoMasterHD/VideoMasterHD_Dv.h>
 #include <VideoMasterHD/VideoMasterHD_Dv_Audio.h>
+#include <VideoMasterHD/VideoMasterHD_Ip_Board.h>
+#include <VideoMasterHD/VideoMasterHD_Ip_ST2110_20.h>
+#include <VideoMasterHD/VideoMasterHD_Ip_ST2110_Board.h>
+#include <VideoMasterHD/VideoMasterHD_SDP.h>
 #include <VideoMasterHD/VideoMasterHD_Sdi.h>
 #include <VideoMasterHD/VideoMasterHD_Sdi_Audio.h>
 #include <VideoMasterHD/VideoMasterHD_String.h>
@@ -44,6 +48,10 @@
 #include <VideoMasterHD_Core.h>
 #include <VideoMasterHD_Dv.h>
 #include <VideoMasterHD_Dv_Audio.h>
+#include <VideoMasterHD_Ip_Board.h>
+#include <VideoMasterHD_Ip_ST2110_20.h>
+#include <VideoMasterHD_Ip_ST2110_Board.h>
+#include <VideoMasterHD_SDP.h>
 #include <VideoMasterHD_Sdi.h>
 #include <VideoMasterHD_Sdi_Audio.h>
 #include <VideoMasterHD_String.h>
@@ -61,6 +69,7 @@ enum AVVideoMasterChannelType
     AV_VIDEOMASTER_CHANNEL_HDMI,
     AV_VIDEOMASTER_CHANNEL_ASISDI,
     AV_VIDEOMASTER_CHANNEL_SDI,
+    AV_VIDEOMASTER_CHANNEL_IP_2110,
     AV_VIDEOMASTER_CHANNEL_UNKNOWN
 };
 
@@ -253,18 +262,62 @@ typedef struct VideoMasterContext
     uint32_t video_height;  ///< height of the video stream
     uint32_t
         video_frame_rate_num;  ///< base for the frame rate of the video stream
-    uint32_t video_frame_rate_den;    ///< denominator for the frame rate of the
-                                      ///< video stream
-    bool           video_interlaced;  ///< interlaced mode of the video stream
-    enum AVCodecID video_codec;       ///< codec ID of the video stream
+    uint32_t video_frame_rate_den;   ///< denominator for the frame rate of the
+                                     ///< video stream
+    bool video_interlaced;           ///< interlaced mode of the video stream
+    bool video_needs_field_reorder;  ///< frame buffer is top-half/bottom-half
+    enum AVCodecID video_codec;      ///< codec ID of the video stream
     enum AVPixelFormat
              video_pixel_format;  ///< pixel format of the video stream
     uint32_t video_bit_rate;      ///< bit rate of the video stream
     enum AVVideoMasterBufferPacking
         video_buffer_packing;  ///< buffer packing format
 
-    bool
-        return_video_next;  ///< true if the next video frame should be returned
+    /* IP ST2110 explicit mode fields (video essence).
+     * Main port is always VHD_IP_BRD_ETHERNETPORT_ETH_0 for the main
+     * stream. SPS will use VHD_IP_BRD_ETHERNETPORT_ETH_1 when added.
+     */
+    uint32_t                     ip_video_destination;
+    uint32_t                     ip_video_sps_destination;
+    uint32_t                     ip_video_udp_port;
+    uint32_t                     ip_video_sps_udp_port;
+    uint32_t                     ip_video_source;
+    uint32_t                     ip_video_sps_source;
+    uint32_t                     ip_video_udp_port_src;
+    uint32_t                     ip_video_sps_udp_port_src;
+    uint32_t                     ip_video_payload_type;
+    uint32_t                     ip_video_sps_payload_type;
+    VHD_ST2110_20_VIDEO_STANDARD ip_video_standard;
+    VHD_ST2110_20_DEPTH          ip_video_depth;
+
+    /* SDP mode fields for the video essence. */
+    bool            ip_video_sdp_mode;
+    VHD_SDP_SESSION ip_video_sdp_session;
+    VHD_SDP_MEDIA   ip_video_sdp_media[2];  ///< [0]=main stream, [1]=SPS stream
+    ULONG           ip_video_sdp_media_count;
+
+    /* IP ST2110-30 audio essence fields. */
+    void    *ip_audio_stream_handle;
+    uint32_t ip_audio_destination;
+    uint32_t ip_audio_udp_port;
+    uint32_t ip_audio_source;
+    uint32_t ip_audio_udp_port_src;
+    uint32_t ip_audio_payload_type;
+    uint32_t ip_audio_sps_destination;
+    uint32_t ip_audio_sps_udp_port;
+    uint32_t ip_audio_sps_source;
+    uint32_t ip_audio_sps_udp_port_src;
+    uint32_t ip_audio_sps_payload_type;
+    uint32_t                  ip_audio_channel_index;
+    VHD_ST2110_30_FORMAT      ip_audio_format;
+    VHD_ST2110_30_PACKET_TIME ip_audio_packet_time;
+    bool            ip_audio_sdp_mode;
+    VHD_SDP_MEDIA   ip_audio_sdp_media;  ///< parsed audio SDP entry (SSM source filter included)
+    void    *ip_sync_handle;
+    bool     ip_sync_mode;  ///< true when video+audio synced via StreamSyncHandle
+    void    *ip_audio_slot_handle;  ///< locked slot for audio-only / non-sync path
+
+    AVPacket *pending_packet;  ///< audio packet buffered from the current slot
     float ltc_frame_rate;   ///< frame rate for LTC timestamp calculation
 
     // audio stream data
@@ -322,6 +375,41 @@ typedef struct VideoMasterData
     int64_t buffer_packing;    ///< buffer packing format
     int64_t dual_stream;  ///< 0/1 if the stream must be configured with 3G-B-DS
                           ///< interface
+
+    char   *ip_video_destination;
+    int64_t ip_video_udp_port;
+    char   *ip_video_sps_destination;
+    int64_t ip_video_sps_udp_port;
+    char   *ip_video_source;
+    char   *ip_video_sps_source;
+    int64_t ip_video_udp_port_src;
+    int64_t ip_video_sps_udp_port_src;
+    int64_t ip_video_payload_type;
+    int64_t ip_video_sps_payload_type;
+    int64_t ip_video_width;
+    int64_t ip_video_height;
+    int64_t ip_video_framerate_num;
+    int64_t ip_video_framerate_den;
+    int64_t ip_video_interlaced;
+    int64_t ip_video_bit_depth;
+    char   *ip_video_sdp_file;
+
+    /* Audio IP ST2110-30 options */
+    char   *ip_audio_destination;
+    int64_t ip_audio_udp_port;
+    char   *ip_audio_source;
+    int64_t ip_audio_udp_port_src;
+    int64_t ip_audio_payload_type;
+    char   *ip_audio_sps_destination;
+    int64_t ip_audio_sps_udp_port;
+    char   *ip_audio_sps_source;
+    int64_t ip_audio_sps_udp_port_src;
+    int64_t ip_audio_sps_payload_type;
+    char   *ip_audio_sdp_file;
+    int64_t ip_audio_nb_channels;
+    int64_t ip_audio_packet_time;
+    int64_t ip_audio_format;
+    int64_t ip_sync;
 } VideoMasterData;
 
 /**
@@ -461,6 +549,15 @@ enum AVVideoMasterChannelType ff_videomaster_get_channel_type_from_index(
  *         AVERROR(EIO) for I/O error
  */
 int ff_videomaster_get_data(VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Rejects IP video parameters for non-IP channel types (SDI, HDMI).
+ *
+ * Returns AVERROR(EINVAL) if any ip_video_* option has been set. Phase 4 (bis)
+ * will extend this to cover audio IP parameters once Phase 3 introduces them.
+ */
+int ff_videomaster_reject_ip_params(VideoMasterData    *data,
+                                    VideoMasterContext *ctx);
 
 /**
  * @brief Retrieves the number of available RX channels for a specified board.

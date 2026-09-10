@@ -739,7 +739,7 @@ Win32 GDI-based screen capture device.
 
 This device allows you to capture a region of the display on Windows.
 
-Amongst options for the imput filenames are such elements as:
+Amongst options for the input filenames are such elements as:
 @example
 desktop
 @end example
@@ -1485,20 +1485,32 @@ Use libv4l2 (v4l-utils) conversion functions. Default is 0.
 
 @section videomaster
 
-The videomaster input device provides capture capabilities for HDMI and SDI DELTACAST(c) devices. 
-IP DELTACAST(c) devices are not supported.
+The videomaster input device provides capture capabilities for HDMI and SDI DELTACAST(c) devices.
+
+For IP DELTACAST(c) devices, an initial explicit-mode support is available for
+ST2110-20 main video stream capture. The implementation does not use SDP, and
+an optional SPS stream can be enabled with the @code{ip_sps_*} options.
 
 To enable this input device, you need to install the VideoMaster DELTACAST(c)
 SDK and you need to configure with appropriate @code{--extra-cflags} to target
 public include directories (or proper Frameworks path for MacOS) and @code{--extra-lfdflags} to target binary directories
 of the SDK (or, again, proper Frameworks path for MacOS).
 
-DELTACAST(c) devices can automatically detect video settings (width, height, frame rate) and handle 
-video format reception. It is possible to select the reception buffer packing, or use the default behavior, which 
+DELTACAST(c) devices can automatically detect video settings (width, height, frame rate) and handle
+video format reception. It is possible to select the reception buffer packing, or use the default behavior, which
 converts the stream to YUV 4:2:2 10-bit or YUV 4:2:2 8-bit.
 Audio can only be received as PCM data and is not processed if the codec is different.
 The audio settings (sample size, sample rate, number of channels, etc.) are also
 detected automatically.
+For IP ST2110 streams, this auto-detection path is not available in this
+implementation: explicit @code{ip_*} parameters are required.
+The @code{buffer_packing} option is ignored in IP mode and is derived from the
+requested bit depth.
+
+When listing sources with @code{-sources videomaster}, locked streams are listed
+even if detailed stream auto-detection is unavailable for a given channel.
+In that case, the source name remains usable and additional format details are
+only displayed when they can be retrieved.
 
 You can use the DELTACAST(c) device as an FFmpeg input in two different ways:
 
@@ -1522,7 +1534,7 @@ Index of the stream to use. Only required when the ffmpeg input is set to dummy 
 Index of the board to use. Only required when the ffmpeg input is set to dummy (-i dummy). If the input is a source name (from `ffmpeg -sources videomaster`), the board index is automatically deduced from the source name. Must be a non negative integer. An error is displayed if the selected board does not exist or is not detected.
 
 @item timestamp_source
-Selects the source for video frame timestamps. Options are: 'hw' for hardware-based timestamps (highest precision, if supported), 'osc' for the device's internal oscillator, 'system' for the system clock, 'ltc_on_board' to use an LTC signal sending to the board by the black burst connnector or 'lt_companion_card' to use LTC signal sending through a TEB companion card. Without LTC signal, use 'hw' for best synchronization accuracy, 'osc' for stable internal timing, or 'system' for general-purpose timing. Default is 'osc'. An error is displayed if the selected timestamp_source is not supported.
+Selects the source for video frame timestamps. Options are: 'hw' for hardware-based timestamps (highest precision, if supported), 'osc' for the device's internal oscillator, 'system' for the system clock, 'ltc_on_board' to use an LTC signal sending to the board by the black burst connnector or 'ltc_companion_card' to use LTC signal sending through a TEB companion card. Without LTC signal, use 'hw' for best synchronization accuracy, 'osc' for stable internal timing, or 'system' for general-purpose timing. Default is 'osc'. An error is displayed if the selected timestamp_source is not supported.
 
 @item nb_channels
 Set the number of audio channels to capture. This option is only used when the input source is an SDI stream. For HDMI streams, the number of channels is automatically detected from the stream properties. Supported values are 1 to 16. If not specified, the default is to use all available channels detected on the SDI stream.
@@ -1538,6 +1550,71 @@ Specifies the buffer packing format and whether to enable the FPGA's color space
 
 @item dual_stream
 Force the 3G-B dual stream interface when it cannot be auto-detected. A 3G Level B-DS stream received on the RX0 physical connector is split into two independent streams: one RX0 stream receives the A link and one RX1 stream receives the B link. When enabled, FFmpeg expects the two streams to be provided on consecutive channels (RX0 for the A link, RX1 for the B link). This option is only relevant for SDI 3G Level B-DS signals. An error is displayed if the selected board and channel do not support the 3G-B dual stream interface. Accepted values are @option{1} (or @option{true}) to enable dual stream mode, and @option{0} (or @option{false}) to disable it. Default is @option{false}.
+
+@item ip_destination
+IPv4 destination address of the main ST2110 stream in explicit mode.
+
+@item ip_sps_destination
+IPv4 destination address of the SPS ST2110 stream in explicit mode. Optional, but required if @code{ip_sps_udp_port} is set.
+
+@item ip_udp_port
+UDP destination port of the main ST2110 stream in explicit mode.
+
+@item ip_sps_udp_port
+UDP destination port of the SPS ST2110 stream in explicit mode. Optional, but required if @code{ip_sps_destination} is set.
+
+@item ip_source
+IPv4 source address of the main ST2110 stream in explicit mode. Used for RX
+source IP filtering in unicast. Optional.
+
+@item ip_sps_source
+IPv4 source address of the SPS ST2110 stream in explicit mode. Used for RX
+source IP filtering in unicast. Optional.
+
+@item ip_udp_port_src
+UDP source port of the main ST2110 stream in explicit mode. Optional.
+
+@item ip_sps_udp_port_src
+UDP source port of the SPS ST2110 stream in explicit mode. Optional.
+
+@item ip_video_payload_type
+RTP video payload type of the main ST2110 stream in explicit mode. Optional. Default is 96.
+
+@item ip_video_sps_payload_type
+RTP video payload type of the SPS ST2110 stream in explicit mode. Optional. Default is 96.
+
+@item ip_video_width
+Video width for explicit ST2110 stream mode.
+
+@item ip_video_height
+Video height for explicit ST2110 stream mode.
+
+@item ip_video_framerate_num
+Video framerate numerator for explicit ST2110 stream mode.
+
+@item ip_video_framerate_den
+Video framerate denominator for explicit ST2110 stream mode.
+
+@item ip_video_interlaced
+Interlaced flag for explicit ST2110 stream mode: @option{0} for progressive,
+@option{1} for interlaced.
+
+@item ip_video_bit_depth
+Bit depth for explicit ST2110 stream mode: @option{8} or @option{10}.
+
+@item ip_sdp_file
+Path to an SDP file (RFC 4566 / SMPTE ST 2110) describing the ST2110-20
+video stream to receive. The SDP must contain exactly one main ST2110-20
+media entry, and optionally a second entry for the SPS (Seamless Protection
+Switching) sub-stream. More than two media entries, or media types other than
+ST2110-20, are rejected as non-compliant.
+
+This option is @emph{mutually exclusive} with @code{ip_destination} and all
+@code{ip_video_*} options. Use either SDP mode or explicit mode, never both.
+
+In SDP mode, source-specific multicast (SSM) filtering expressed via the
+@code{a=source-filter} SDP attribute is applied automatically. Only IPv4
+destinations are supported.
 
 @end table
 
@@ -1573,6 +1650,25 @@ ffmpeg -channel_index 0 -board_index 0 -timestamp_source ltc_companion_card -f v
 Capture a 3G Level B-DS dual stream signal received on RX0/RX1 of board 0
 @example
 ffmpeg -f videomaster -board_index 0 -channel_index 0 -dual_stream 1 -i dummy -c:a copy -c:v copy output.avi
+@end example
+
+@item
+Capture a ST2110-20 main video stream in explicit mode
+@example
+ffmpeg -f videomaster -i dummy -board_index 0 -channel_index 0 @\
+    -ip_destination 239.10.20.30 -ip_udp_port 5004 -ip_video_payload_type 112 @\
+    -ip_video_width 1920 -ip_video_height 1080 @\
+    -ip_video_framerate_num 60000 -ip_video_framerate_den 1001 @\
+    -ip_video_interlaced 0 -ip_video_bit_depth 10 @\
+    -c:v copy output.avi
+@end example
+
+@item
+Capture a ST2110-20 video stream from an SDP file (SDP mode)
+@example
+ffmpeg -f videomaster -i dummy -board_index 0 -channel_index 0 @\
+    -ip_sdp_file /path/to/stream.sdp @\
+    -c:v copy output.avi
 @end example
 
 @end itemize
