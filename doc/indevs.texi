@@ -1487,9 +1487,12 @@ Use libv4l2 (v4l-utils) conversion functions. Default is 0.
 
 The videomaster input device provides capture capabilities for HDMI and SDI DELTACAST(c) devices.
 
-For IP DELTACAST(c) devices, an initial explicit-mode support is available for
-ST2110-20 main video stream capture. The implementation does not use SDP, and
-an optional SPS stream can be enabled with the @code{ip_sps_*} options.
+For IP DELTACAST(c) devices, explicit-mode support is available for ST2110-20
+video and ST2110-30 audio stream capture, optionally synchronized via
+@code{ip_sync}. Each essence can also be configured from an SDP file
+(@code{ip_video_sdp_file} / @code{ip_audio_sdp_file}). Redundant (ST 2022-7)
+reception is available for both essences via the @code{ip_video_sps_*} /
+@code{ip_audio_sps_*} options.
 
 To enable this input device, you need to install the VideoMaster DELTACAST(c)
 SDK and you need to configure with appropriate @code{--extra-cflags} to target
@@ -1551,70 +1554,126 @@ Specifies the buffer packing format and whether to enable the FPGA's color space
 @item dual_stream
 Force the 3G-B dual stream interface when it cannot be auto-detected. A 3G Level B-DS stream received on the RX0 physical connector is split into two independent streams: one RX0 stream receives the A link and one RX1 stream receives the B link. When enabled, FFmpeg expects the two streams to be provided on consecutive channels (RX0 for the A link, RX1 for the B link). This option is only relevant for SDI 3G Level B-DS signals. An error is displayed if the selected board and channel do not support the 3G-B dual stream interface. Accepted values are @option{1} (or @option{true}) to enable dual stream mode, and @option{0} (or @option{false}) to disable it. Default is @option{false}.
 
-@item ip_destination
-IPv4 destination address of the main ST2110 stream in explicit mode.
+@item ip_video_destination
+IPv4 destination address of the main ST2110-20 video stream in explicit mode.
 
-@item ip_sps_destination
-IPv4 destination address of the SPS ST2110 stream in explicit mode. Optional, but required if @code{ip_sps_udp_port} is set.
+@item ip_video_sps_destination
+IPv4 destination address of the SPS (redundant, ST 2022-7) ST2110-20 video
+stream in explicit mode. Optional, but required if @code{ip_video_sps_udp_port}
+is set.
 
-@item ip_udp_port
-UDP destination port of the main ST2110 stream in explicit mode.
+@item ip_video_udp_port
+UDP destination port of the main ST2110-20 video stream in explicit mode.
 
-@item ip_sps_udp_port
-UDP destination port of the SPS ST2110 stream in explicit mode. Optional, but required if @code{ip_sps_destination} is set.
+@item ip_video_sps_udp_port
+UDP destination port of the SPS ST2110-20 video stream in explicit mode.
+Optional, but required if @code{ip_video_sps_destination} is set.
 
-@item ip_source
-IPv4 source address of the main ST2110 stream in explicit mode. Used for RX
-source IP filtering in unicast. Optional.
+@item ip_video_source
+IPv4 source address of the main ST2110-20 video stream in explicit mode
+(unicast RX source filtering). Optional.
 
-@item ip_sps_source
-IPv4 source address of the SPS ST2110 stream in explicit mode. Used for RX
-source IP filtering in unicast. Optional.
+@item ip_video_sps_source
+IPv4 source address of the SPS ST2110-20 video stream in explicit mode.
+Optional.
 
-@item ip_udp_port_src
-UDP source port of the main ST2110 stream in explicit mode. Optional.
+@item ip_video_udp_port_src
+UDP source port of the main ST2110-20 video stream in explicit mode. Optional.
 
-@item ip_sps_udp_port_src
-UDP source port of the SPS ST2110 stream in explicit mode. Optional.
+@item ip_video_sps_udp_port_src
+UDP source port of the SPS ST2110-20 video stream in explicit mode. Optional.
 
 @item ip_video_payload_type
-RTP video payload type of the main ST2110 stream in explicit mode. Optional. Default is 96.
+RTP video payload type of the main ST2110-20 stream in explicit mode.
+Optional. Default is 96.
 
 @item ip_video_sps_payload_type
-RTP video payload type of the SPS ST2110 stream in explicit mode. Optional. Default is 96.
+RTP video payload type of the SPS ST2110-20 stream in explicit mode.
+Optional. Default is 96.
 
 @item ip_video_width
-Video width for explicit ST2110 stream mode.
+Video width for explicit ST2110-20 stream mode.
 
 @item ip_video_height
-Video height for explicit ST2110 stream mode.
+Video height for explicit ST2110-20 stream mode.
 
 @item ip_video_framerate_num
-Video framerate numerator for explicit ST2110 stream mode.
+Video framerate numerator for explicit ST2110-20 stream mode.
 
 @item ip_video_framerate_den
-Video framerate denominator for explicit ST2110 stream mode.
+Video framerate denominator for explicit ST2110-20 stream mode.
 
 @item ip_video_interlaced
-Interlaced flag for explicit ST2110 stream mode: @option{0} for progressive,
-@option{1} for interlaced.
+Interlaced flag for explicit ST2110-20 stream mode: @option{0} for
+progressive, @option{1} for interlaced.
 
 @item ip_video_bit_depth
-Bit depth for explicit ST2110 stream mode: @option{8} or @option{10}.
+Bit depth for explicit ST2110-20 stream mode: @option{8} or @option{10}.
 
-@item ip_sdp_file
+@item ip_video_sdp_file
 Path to an SDP file (RFC 4566 / SMPTE ST 2110) describing the ST2110-20
-video stream to receive. The SDP must contain exactly one main ST2110-20
-media entry, and optionally a second entry for the SPS (Seamless Protection
-Switching) sub-stream. More than two media entries, or media types other than
-ST2110-20, are rejected as non-compliant.
+video stream to receive. Mutually exclusive with @code{ip_video_destination}
+and all other @code{ip_video_*} options.
 
-This option is @emph{mutually exclusive} with @code{ip_destination} and all
-@code{ip_video_*} options. Use either SDP mode or explicit mode, never both.
+@item ip_audio_destination
+IPv4 destination address of the ST2110-30 audio stream in explicit mode.
 
-In SDP mode, source-specific multicast (SSM) filtering expressed via the
-@code{a=source-filter} SDP attribute is applied automatically. Only IPv4
-destinations are supported.
+@item ip_audio_sps_destination
+IPv4 destination address of the SPS (redundant, ST 2022-7) ST2110-30 audio
+stream in explicit mode. Optional, but required if
+@code{ip_audio_sps_udp_port} is set.
+
+@item ip_audio_udp_port
+UDP destination port of the ST2110-30 audio stream in explicit mode.
+
+@item ip_audio_sps_udp_port
+UDP destination port of the SPS ST2110-30 audio stream in explicit mode.
+Optional, but required if @code{ip_audio_sps_destination} is set.
+
+@item ip_audio_source
+IPv4 source address of the ST2110-30 audio stream in explicit mode
+(unicast RX source filtering). Optional.
+
+@item ip_audio_sps_source
+IPv4 source address of the SPS ST2110-30 audio stream in explicit mode.
+Optional.
+
+@item ip_audio_udp_port_src
+UDP source port of the ST2110-30 audio stream in explicit mode. Optional.
+
+@item ip_audio_sps_udp_port_src
+UDP source port of the SPS ST2110-30 audio stream in explicit mode. Optional.
+
+@item ip_audio_payload_type
+RTP payload type of the ST2110-30 audio stream in explicit mode. Optional.
+Default is 97.
+
+@item ip_audio_sps_payload_type
+RTP payload type of the SPS ST2110-30 audio stream in explicit mode.
+Optional. Default is 97.
+
+@item ip_audio_nb_channels
+Number of audio channels for the ST2110-30 stream. Supported values are 1 to
+64. Default is 2.
+
+@item ip_audio_packet_time
+RTP packet time for the ST2110-30 audio stream: @option{1ms} or
+@option{125us}. Default is @option{1ms}.
+
+@item ip_audio_format
+PCM sample format for the ST2110-30 audio stream: @option{L16} or
+@option{L24}. Default is @option{L24}. The sample rate is fixed at 48 kHz.
+
+@item ip_audio_sdp_file
+Path to a dedicated SDP file (SMPTE ST 2110-30) describing the audio stream
+to receive. Mutually exclusive with @code{ip_audio_destination}.
+
+@item ip_sync
+Enable ST2110 stream synchronization between the video and audio essences
+(locks both essences on the same slot). Requires both a video and an audio
+stream to be configured. Accepted values are @option{1} (default) to enable,
+and @option{0} to acquire each essence independently, with no timing
+guarantee between them.
 
 @end table
 
@@ -1653,21 +1712,25 @@ ffmpeg -f videomaster -board_index 0 -channel_index 0 -dual_stream 1 -i dummy -c
 @end example
 
 @item
-Capture a ST2110-20 main video stream in explicit mode
+Capture synchronized ST2110-20 video and ST2110-30 audio streams in explicit
+mode
 @example
-ffmpeg -f videomaster -i dummy -board_index 0 -channel_index 0 @\
-    -ip_destination 239.10.20.30 -ip_udp_port 5004 -ip_video_payload_type 112 @\
-    -ip_video_width 1920 -ip_video_height 1080 @\
-    -ip_video_framerate_num 60000 -ip_video_framerate_den 1001 @\
-    -ip_video_interlaced 0 -ip_video_bit_depth 10 @\
-    -c:v copy output.avi
+ffmpeg -f videomaster -i dummy -board_index 0 -channel_index 0 @@
+    -ip_video_destination 239.0.0.5 -ip_video_udp_port 50020 -ip_video_payload_type 96 @@
+    -ip_video_width 1920 -ip_video_height 1080 @@
+    -ip_video_framerate_num 25 -ip_video_framerate_den 1 @@
+    -ip_video_interlaced 0 -ip_video_bit_depth 10 @@
+    -ip_audio_destination 239.0.0.5 -ip_audio_udp_port 50030 -ip_audio_payload_type 97 @@
+    -ip_audio_nb_channels 2 -ip_audio_packet_time 1ms -ip_audio_format L24 @@
+    -ip_sync 1 @@
+    -c:v copy -c:a copy output.mov
 @end example
 
 @item
 Capture a ST2110-20 video stream from an SDP file (SDP mode)
 @example
-ffmpeg -f videomaster -i dummy -board_index 0 -channel_index 0 @\
-    -ip_sdp_file /path/to/stream.sdp @\
+ffmpeg -f videomaster -i dummy -board_index 0 -channel_index 0 @@
+    -ip_video_sdp_file /path/to/stream.sdp @@
     -c:v copy output.avi
 @end example
 
