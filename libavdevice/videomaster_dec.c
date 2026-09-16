@@ -395,24 +395,30 @@ static int check_header_arguments(VideoMasterData    *videomaster_data,
     return 0;
 }
 
-static int check_timestamp_source(VideoMasterContext *videomaster_context)
+/**
+ * @brief Checks a single timestamp source value for capability/presence
+ * support, independent of which option (video or IP audio) it came from.
+ * @param videomaster_context VideoMasterContext pointer to the VideoMaster
+ * context
+ * @param source The timestamp source value to validate
+ * @param option_name Name of the option this value came from, used in error
+ * messages
+ * @return int 0 on success, or negative AVERROR code on failure
+ */
+static int check_one_timestamp_source(VideoMasterContext *videomaster_context,
+                                      enum AVVideoMasterTimeStampType source,
+                                      const char *option_name)
 {
-    VHD_TIMECODE  time_code;
-    BOOL32        ltc_source_is_locked;
-    float         ltc_source_frame_rate;
-    VHD_ERRORCODE error_code;
-
-    if (videomaster_context->timestamp_source ==
-            AV_VIDEOMASTER_TIMESTAMP_HARDWARE &&
+    if (source == AV_VIDEOMASTER_TIMESTAMP_HARDWARE &&
         !ff_videomaster_is_hardware_timestamp_supported(videomaster_context))
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
                "Hardware time stamping is not supported on the device. Please "
-               "change the value of timestamp_source.\n");
+               "change the value of %s.\n",
+               option_name);
         return AVERROR(EINVAL);
     }
-    else if (videomaster_context->timestamp_source ==
-             AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD)
+    else if (source == AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD)
     {
         if (!ff_videomaster_is_ltc_companion_card_supported(
                 videomaster_context))
@@ -421,7 +427,8 @@ static int check_timestamp_source(VideoMasterContext *videomaster_context)
                    "LTC companion card feature is not supported on the device. "
                    "LTC companion card timestamp sources is "
                    "not available. Please change the value of "
-                   "timestamp_source.\n");
+                   "%s.\n",
+                   option_name);
             return AVERROR(EINVAL);
         }
         else
@@ -432,13 +439,13 @@ static int check_timestamp_source(VideoMasterContext *videomaster_context)
                 av_log(videomaster_context->avctx, AV_LOG_ERROR,
                        "LTC companion card is not detected. Please check your "
                        "hardware configuration or change the value "
-                       "of timestamp_source.\n");
+                       "of %s.\n",
+                       option_name);
                 return AVERROR(EINVAL);
             }
         }
     }
-    else if (videomaster_context->timestamp_source ==
-             AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD)
+    else if (source == AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD)
     {
         if (!ff_videomaster_is_ltc_on_board_timestamp_supported(
                 videomaster_context))
@@ -446,11 +453,95 @@ static int check_timestamp_source(VideoMasterContext *videomaster_context)
             av_log(videomaster_context->avctx, AV_LOG_ERROR,
                    "LTC on-board feature is not supported on the device. LTC "
                    "on-board timestamp source is not available. Please change "
-                   "the value of timestamp_source.\n");
+                   "the value of %s.\n",
+                   option_name);
+            return AVERROR(EINVAL);
+        }
+    }
+    else if (source == AV_VIDEOMASTER_TIMESTAMP_RTP &&
+             videomaster_context->channel_type !=
+                 AV_VIDEOMASTER_CHANNEL_IP_2110)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "RTP timestamp source is only available for IP channels. "
+               "Please change the value of %s.\n",
+               option_name);
+        return AVERROR(EINVAL);
+    }
+    else if (source == AV_VIDEOMASTER_TIMESTAMP_PTP)
+    {
+        if (videomaster_context->channel_type != AV_VIDEOMASTER_CHANNEL_IP_2110)
+        {
+            av_log(videomaster_context->avctx, AV_LOG_ERROR,
+                   "PTP timestamp source is only available for IP channels. "
+                   "Please change the value of %s.\n",
+                   option_name);
+            return AVERROR(EINVAL);
+        }
+        if (!ff_videomaster_is_ptp_supported(videomaster_context))
+        {
+            av_log(videomaster_context->avctx, AV_LOG_ERROR,
+                   "PTP is not supported on this board. Please change the "
+                   "value of %s.\n",
+                   option_name);
+            return AVERROR(EINVAL);
+        }
+        if (!ff_videomaster_is_ptp_locked(videomaster_context))
+        {
+            av_log(videomaster_context->avctx, AV_LOG_WARNING,
+                   "PTP is not locked to a master clock. The timestamp "
+                   "derived from %s may be inaccurate until it locks.\n",
+                   option_name);
+        }
+    }
+
+    return 0;
+}
+
+static int check_timestamp_source(VideoMasterContext *videomaster_context)
+{
+    VHD_TIMECODE  time_code;
+    BOOL32        ltc_source_is_locked;
+    float         ltc_source_frame_rate;
+    VHD_ERRORCODE error_code;
+    int           status;
+    bool          audio_source_applies = videomaster_context->channel_type ==
+                                             AV_VIDEOMASTER_CHANNEL_IP_2110 &&
+                                         videomaster_context->has_audio;
+
+    if ((status = check_one_timestamp_source(
+             videomaster_context, videomaster_context->timestamp_source,
+             "timestamp_source")) != 0)
+        return status;
+
+    if (audio_source_applies)
+    {
+        if ((status = check_one_timestamp_source(
+                 videomaster_context,
+                 videomaster_context->audio_timestamp_source,
+                 "ip_audio_timestamp_source")) != 0)
+            return status;
+
+        if (videomaster_context->timestamp_source <
+                AV_VIDEOMASTER_TIMESTAMP_HARDWARE &&
+            videomaster_context->audio_timestamp_source <
+                AV_VIDEOMASTER_TIMESTAMP_HARDWARE &&
+            videomaster_context->timestamp_source !=
+                videomaster_context->audio_timestamp_source)
+        {
+            av_log(videomaster_context->avctx, AV_LOG_ERROR,
+                   "timestamp_source and ip_audio_timestamp_source can't both "
+                   "be 'osc'/'system' with different values: that clock type "
+                   "is a single board-wide setting. Pick the same value for "
+                   "both, or use 'hardware'/'ltc_*'/'rtp' for one of "
+                   "them.\n");
             return AVERROR(EINVAL);
         }
     }
 
+    /* Timecode fetch + lock/frame-rate diagnostics: video-specific (the
+     * frame-rate comparison below only makes sense against the video
+     * essence), triggered only by the primary timestamp_source. */
     if (videomaster_context->timestamp_source ==
             AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD ||
         videomaster_context->timestamp_source ==
@@ -624,6 +715,29 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
             return AVERROR(EINVAL);
         }
 
+        if (videomaster_data->ip_audio_timestamp_source == -1)
+        {
+            /* Not explicitly set: the IP audio essence follows whatever
+             * timestamp_source resolved to above. */
+            videomaster_context->audio_timestamp_source =
+                videomaster_context->timestamp_source;
+        }
+        else if (videomaster_data->ip_audio_timestamp_source >= 0 &&
+                 videomaster_data->ip_audio_timestamp_source <
+                     AV_VIDEOMASTER_TIMESTAMP_NB)
+        {
+            videomaster_context->audio_timestamp_source =
+                (enum AVVideoMasterTimeStampType)
+                    videomaster_data->ip_audio_timestamp_source;
+        }
+        else
+        {
+            av_log(avctx, AV_LOG_ERROR,
+                   "Invalid ip_audio_timestamp_source value: %" PRId64 "\n",
+                   videomaster_data->ip_audio_timestamp_source);
+            return AVERROR(EINVAL);
+        }
+
         videomaster_context->audio_nb_channels = videomaster_data->nb_channels;
         videomaster_context->audio_sample_rate = videomaster_data->sample_rate;
         videomaster_context->audio_sample_size = videomaster_data->sample_size;
@@ -740,6 +854,11 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
                videomaster_context->timestamp_source),
            VHD_BUFFERPACKING_ToPrettyString(
                videomaster_context->video_buffer_packing));
+    if (videomaster_context->audio_timestamp_source !=
+        videomaster_context->timestamp_source)
+        av_log(avctx, AV_LOG_INFO, "IP audio timestamp source: %s\n",
+               ff_videomaster_timestamp_type_to_string(
+                   videomaster_context->audio_timestamp_source));
 
     if (videomaster_context->ip_video_destination != 0 &&
         !videomaster_context->ip_video_sdp_mode)
@@ -1300,6 +1419,7 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
         pkt->stream_index = videomaster_context->video_stream->index;
         ff_videomaster_get_timestamp(videomaster_context,
                                      videomaster_context->slot_handle,
+                                     videomaster_context->timestamp_source,
                                      &videomaster_context->pts);
         pkt->pts = videomaster_context->pts;
         pkt->dts = pkt->pts;
@@ -1353,9 +1473,10 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
          * video branch and the same design DeckLink uses by default for its
          * audio essence (GetPacketTime) — trust the hardware/driver
          * timestamp rather than reconstructing one locally. */
-        ff_videomaster_get_timestamp(videomaster_context,
-                                     videomaster_context->ip_audio_slot_handle,
-                                     &videomaster_context->pts);
+        ff_videomaster_get_timestamp(
+            videomaster_context, videomaster_context->ip_audio_slot_handle,
+            videomaster_context->audio_timestamp_source,
+            &videomaster_context->pts);
         pkt->pts = videomaster_context->pts;
         pkt->dts = pkt->pts;
         if (ff_videomaster_get_audio_slots_counter(videomaster_context) != 0)
@@ -1391,12 +1512,44 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
             AVPacket *apkt = videomaster_context->pending_packet;
             memcpy(apkt->data, audio_buf, audio_size);
             apkt->stream_index = videomaster_context->audio_stream->index;
-            apkt->pts = videomaster_context->pts;
+            if (videomaster_context->ip_sync_mode)
+            {
+                /* Sync mode: video and audio are locked together on one
+                 * shared slot, so sharing the timestamp already computed
+                 * for the video packet above is correct by construction. */
+                apkt->pts = videomaster_context->pts;
+            }
+            else
+            {
+                /* Non-sync mode: audio is a genuinely independent essence,
+                 * locked from its own slot — timestamp it from its own
+                 * resolved source instead of silently inheriting video's
+                 * pts. */
+                uint64_t audio_pts = 0;
+                ff_videomaster_get_timestamp(
+                    videomaster_context,
+                    videomaster_context->ip_audio_slot_handle,
+                    videomaster_context->audio_timestamp_source, &audio_pts);
+                apkt->pts = audio_pts;
+            }
             apkt->dts = apkt->pts;
             apkt->duration = fill_audio_packet_duration(
                 audio_size, videomaster_context->audio_nb_channels,
                 videomaster_context->audio_sample_size,
                 videomaster_context->audio_sample_rate);
+            if (ff_videomaster_get_audio_slots_counter(videomaster_context) !=
+                0)
+            {
+                av_log(avctx, AV_LOG_ERROR,
+                       "Failed to get audio slots counter\n");
+            }
+            else
+            {
+                av_log(avctx, AV_LOG_TRACE,
+                       "%u audio slots received (%u dropped)\n",
+                       videomaster_context->audio_slots_received,
+                       videomaster_context->audio_slots_dropped);
+            }
             videomaster_context->audio_frames_received += audio_size;
             av_log(avctx, AV_LOG_TRACE, "%u audio frames received\n",
                    videomaster_context->audio_frames_received);
@@ -1435,11 +1588,17 @@ static const AVOption options[] = {
           AV_OPT_FLAG_AUDIO_PARAM,
       NULL },
     { "timestamp_source",
-      "Selects the source for video frame timestamps. Options are: 'hw' for "
+      "Selects the source for video frame timestamps (and, for SDI/HDMI, the "
+      "single shared audio+video essence). Options are: 'hw' for "
       "hardware-based timestamps (highest precision, if supported), 'osc' for "
-      "the device's internal oscillator, or 'system' for the system clock. Use "
-      "'hw' for best synchronization accuracy, 'osc' for stable internal "
-      "timing, or 'system' for general-purpose timing. Default is 'osc'.",
+      "the device's internal oscillator, 'system' for the system clock, "
+      "'ltc_on_board'/'ltc_companion_card' for an LTC timecode source, 'rtp' "
+      "(IP only) for the ST2110 essence's own RTP media clock, or 'ptp' (IP "
+      "only) for the board's absolute PTP time. Use 'hw' for best "
+      "synchronization accuracy, 'osc' for stable internal timing, or "
+      "'system' for general-purpose timing. Default is 'osc'. For IP, the "
+      "audio essence can use a different source via "
+      "ip_audio_timestamp_source.",
       OFFSET(timestamp_source),
       AV_OPT_TYPE_INT64,
       { .i64 = AV_VIDEOMASTER_TIMESTAMP_OSCILLATOR },
@@ -1493,6 +1652,26 @@ static const AVOption options[] = {
       0,
       AV_OPT_TYPE_CONST,
       { .i64 = AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM |
+          AV_OPT_FLAG_AUDIO_PARAM,
+      .unit = "timestamp_source" },
+    { "rtp",
+      NULL,
+      0,
+      AV_OPT_TYPE_CONST,
+      { .i64 = AV_VIDEOMASTER_TIMESTAMP_RTP },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM |
+          AV_OPT_FLAG_AUDIO_PARAM,
+      .unit = "timestamp_source" },
+    { "ptp",
+      NULL,
+      0,
+      AV_OPT_TYPE_CONST,
+      { .i64 = AV_VIDEOMASTER_TIMESTAMP_PTP },
       0,
       0,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM |
@@ -2252,6 +2431,21 @@ static const AVOption options[] = {
       0,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
       NULL },
+    { "ip_audio_timestamp_source",
+      "Selects the pts source for the IP audio essence specifically (same "
+      "values as timestamp_source: 'osc', 'system', 'hw', 'ltc_on_board', "
+      "'ltc_companion_card', 'rtp', 'ptp'). Default (-1) makes the audio "
+      "essence follow timestamp_source. 'osc'/'system' select a single "
+      "board-wide "
+      "clock type, so timestamp_source and ip_audio_timestamp_source can't "
+      "pick different ones of those two at the same time.",
+      OFFSET(ip_audio_timestamp_source),
+      AV_OPT_TYPE_INT64,
+      { .i64 = -1 },
+      -1,
+      AV_VIDEOMASTER_TIMESTAMP_NB - 1,
+      AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
+      .unit = "timestamp_source" },
     { "ip_sync",
       "Enable ST2110 stream synchronization (video+audio). Default on. "
       "Disable for independent essence acquisition.",

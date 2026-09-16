@@ -1537,7 +1537,7 @@ Index of the stream to use. Only required when the ffmpeg input is set to dummy 
 Index of the board to use. Only required when the ffmpeg input is set to dummy (-i dummy). If the input is a source name (from `ffmpeg -sources videomaster`), the board index is automatically deduced from the source name. Must be a non negative integer. An error is displayed if the selected board does not exist or is not detected.
 
 @item timestamp_source
-Selects the source for video frame timestamps. Options are: 'hw' for hardware-based timestamps (highest precision, if supported), 'osc' for the device's internal oscillator, 'system' for the system clock, 'ltc_on_board' to use an LTC signal sending to the board by the black burst connnector or 'ltc_companion_card' to use LTC signal sending through a TEB companion card. Without LTC signal, use 'hw' for best synchronization accuracy, 'osc' for stable internal timing, or 'system' for general-purpose timing. Default is 'osc'. An error is displayed if the selected timestamp_source is not supported.
+Selects the source for video frame timestamps (and, for SDI/HDMI, the single shared audio+video essence). Options are: 'hw' for hardware-based timestamps (highest precision, if supported), 'osc' for the device's internal oscillator, 'system' for the system clock, 'ltc_on_board' to use an LTC signal sending to the board by the black burst connnector, 'ltc_companion_card' to use LTC signal sending through a TEB companion card, 'rtp' (IP only) to use the ST2110 essence's own RTP media clock, or 'ptp' (IP only) to use the board's absolute PTP time (requires the board to support PTP; a warning is displayed if PTP is not yet locked to a master clock). Without LTC signal, use 'hw' for best synchronization accuracy, 'osc' for stable internal timing, or 'system' for general-purpose timing. Default is 'osc'. An error is displayed if the selected timestamp_source is not supported. For IP devices, the audio essence can use a different source via @code{ip_audio_timestamp_source}.
 
 @item nb_channels
 Set the number of audio channels to capture. This option is only used when the input source is an SDI stream. For HDMI streams, the number of channels is automatically detected from the stream properties. Supported values are 1 to 16. If not specified, the default is to use all available channels detected on the SDI stream.
@@ -1667,6 +1667,17 @@ PCM sample format for the ST2110-30 audio stream: @option{L16} or
 @item ip_audio_sdp_file
 Path to a dedicated SDP file (SMPTE ST 2110-30) describing the audio stream
 to receive. Mutually exclusive with @code{ip_audio_destination}.
+
+@item ip_audio_timestamp_source
+Selects the pts source for the IP audio essence specifically. Same values as
+@code{timestamp_source}: @option{osc}, @option{system}, @option{hw},
+@option{ltc_on_board}, @option{ltc_companion_card}, @option{rtp},
+@option{ptp}. Default is
+@option{-1}, which makes the audio essence follow @code{timestamp_source}.
+@option{osc} and @option{system} select a single board-wide clock type, so
+@code{timestamp_source} and @code{ip_audio_timestamp_source} cannot pick
+different ones of those two at the same time — an error is displayed if they
+do.
 
 @item ip_sync
 Enable ST2110 stream synchronization between the video and audio essences

@@ -11,10 +11,12 @@
 #if defined(__APPLE__)
 #include <VideoMasterHD/VideoMasterHD_Core.h>
 #include <VideoMasterHD/VideoMasterHD_Ip_ST2110_Board.h>
+#include <VideoMasterHD/VideoMasterHD_PTP.h>
 #include <VideoMasterHD/VideoMasterHD_String.h>
 #else
 #include <VideoMasterHD_Core.h>
 #include <VideoMasterHD_Ip_ST2110_Board.h>
+#include <VideoMasterHD_PTP.h>
 #include <VideoMasterHD_String.h>
 #endif
 
@@ -755,10 +757,27 @@ static int setup_buffer_packing(VideoMasterContext *videomaster_context)
 
 static int setup_timestamp_source(VideoMasterContext *videomaster_context)
 {
-    int av_error = 0;
+    int  av_error = 0;
+    bool audio_source_applies = videomaster_context->channel_type ==
+                                    AV_VIDEOMASTER_CHANNEL_IP_2110 &&
+                                videomaster_context->has_audio;
+    /* osc/system are configured via a single board-wide property: video's
+     * timestamp_source and audio's audio_timestamp_source can't both need
+     * it with different values (checked earlier, at open time, in
+     * check_timestamp_source()) — whichever of the two needs it here is
+     * fine to apply, they're guaranteed equal if both do. */
+    bool need_board_clk_type = videomaster_context->timestamp_source <
+                                   AV_VIDEOMASTER_TIMESTAMP_HARDWARE ||
+                               (audio_source_applies &&
+                                videomaster_context->audio_timestamp_source <
+                                    AV_VIDEOMASTER_TIMESTAMP_HARDWARE);
+    enum AVVideoMasterTimeStampType board_clk_source =
+        videomaster_context->timestamp_source <
+                AV_VIDEOMASTER_TIMESTAMP_HARDWARE
+            ? videomaster_context->timestamp_source
+            : videomaster_context->audio_timestamp_source;
 
-    if (videomaster_context->timestamp_source <
-        AV_VIDEOMASTER_TIMESTAMP_HARDWARE)
+    if (need_board_clk_type)
         GET_AND_CHECK(
             ff_videomaster_handle_vhd_status, videomaster_context->avctx,
             videomaster_context->avctx,
@@ -766,11 +785,14 @@ static int setup_timestamp_source(VideoMasterContext *videomaster_context)
                 videomaster_context->board_handle,
                 VHD_CORE_BP_SYSTEM_TIME_CLK_TYPE,
                 get_videomaster_enumeration_value_for_timestamp_source(
-                    videomaster_context->timestamp_source)),
+                    board_clk_source)),
             "System time clock type set successfully",
             "Failed to set system time clock type");
-    else if (videomaster_context->timestamp_source ==
-             AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD)
+
+    if (videomaster_context->timestamp_source ==
+            AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD ||
+        (audio_source_applies && videomaster_context->audio_timestamp_source ==
+                                     AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD))
     {
         ff_videomaster_handle_vhd_status(
             videomaster_context->avctx,
@@ -909,6 +931,17 @@ static int get_audio_buffer(VideoMasterContext *videomaster_context)
     else if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_SDI ||
              videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_ASISDI)
         return ff_videomaster_get_audio_buffer_sdi(videomaster_context);
+    else if (videomaster_context->channel_type ==
+             AV_VIDEOMASTER_CHANNEL_IP_2110)
+    {
+        /* Deliberate no-op: unlike HDMI/SDI embedded audio (extracted from
+         * the single shared slot locked above), IP ST2110-30 audio is
+         * always a separate essence with its own stream/slot handle,
+         * fetched independently by the caller (see
+         * ff_videomaster_lock_next_slot_ip() in videomaster_ip.c). This
+         * function must not treat that as an error. */
+        return 0;
+    }
 
     av_log(videomaster_context->avctx, AV_LOG_ERROR,
            "Audio buffer extraction is not supported for channel type %s\n",
@@ -1616,7 +1649,9 @@ int ff_videomaster_get_nb_tx_channels(VideoMasterContext *videomaster_context)
 }
 
 int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
-                                 void *slot_handle, uint64_t *timestamp)
+                                 void               *slot_handle,
+                                 enum AVVideoMasterTimeStampType source,
+                                 uint64_t                       *timestamp)
 {
     int             av_error = 0;
     uint32_t        clock_frequency = 0;
@@ -1631,9 +1666,16 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
         return AVERROR(EINVAL);
     }
 
-    if (videomaster_context->timestamp_source ==
-        AV_VIDEOMASTER_TIMESTAMP_HARDWARE)
+    if (source == AV_VIDEOMASTER_TIMESTAMP_HARDWARE)
     {
+        bool      is_audio_slot = videomaster_context->ip_audio_slot_handle !=
+                                      NULL &&
+                                  slot_handle ==
+                                      videomaster_context->ip_audio_slot_handle;
+        uint64_t *hw_ts_base = is_audio_slot
+                                  ? &videomaster_context->hw_ts_base_audio
+                                  : &videomaster_context->hw_ts_base_video;
+
         GET_AND_CHECK(ff_videomaster_handle_vhd_status,
                       videomaster_context->avctx, videomaster_context->avctx,
                       VHD_GetSlotHardwareTimestamp(slot_handle, timestamp,
@@ -1643,13 +1685,20 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
                       "Failed to retrieve hardware "
                       "timestamp");
         *timestamp = (*timestamp * 1000000) / clock_frequency;
+        /* Normalize to start near 0, same as the system/osc branch below —
+         * otherwise this essence's pts (an absolute, since-boot value)
+         * would be wildly offset from another essence normalized to 0,
+         * breaking any downstream component that compares pts across
+         * streams (e.g. ip_sync 0 with a different source per essence). */
+        if (*hw_ts_base == 0)
+            *hw_ts_base = *timestamp;
+        *timestamp -= *hw_ts_base;
         av_log(videomaster_context->avctx, AV_LOG_DEBUG,
-               "Hardware timestamp: %lli\n", *timestamp);
+               "Hardware timestamp (%s): %lli\n",
+               is_audio_slot ? "audio" : "video", *timestamp);
     }
-    else if (videomaster_context->timestamp_source ==
-                 AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD ||
-             videomaster_context->timestamp_source ==
-                 AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD)
+    else if (source == AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD ||
+             source == AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD)
     {
         GET_AND_CHECK(
             ff_videomaster_handle_vhd_status, videomaster_context->avctx,
@@ -1658,7 +1707,7 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
                 slot_handle,
                 (VHD_TIMECODE_SOURCE)
                     get_videomaster_enumeration_value_for_timestamp_source(
-                        videomaster_context->timestamp_source),
+                        source),
                 &time_code),
             "LTC Timestamp retrieved "
             "successfully",
@@ -1675,6 +1724,85 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
                "Timecode: %02d:%02d:%02d:%02d - Computed timestamp: %lli\n",
                time_code.Hour, time_code.Minute, time_code.Second,
                time_code.Frame, *timestamp);
+    }
+    else if (source == AV_VIDEOMASTER_TIMESTAMP_RTP)
+    {
+        ULONG raw_rtp_timestamp = 0;
+        bool  is_audio_slot = videomaster_context->ip_audio_slot_handle !=
+                                  NULL &&
+                              slot_handle ==
+                                  videomaster_context->ip_audio_slot_handle;
+        bool *initialized =
+            is_audio_slot ? &videomaster_context->rtp_ts_initialized_audio
+                          : &videomaster_context->rtp_ts_initialized_video;
+        uint32_t *last_raw = is_audio_slot
+                                 ? &videomaster_context->rtp_ts_last_raw_audio
+                                 : &videomaster_context->rtp_ts_last_raw_video;
+        int64_t *unwrapped = is_audio_slot
+                                 ? &videomaster_context->rtp_ts_unwrapped_audio
+                                 : &videomaster_context->rtp_ts_unwrapped_video;
+        /* Audio RTP clock rate is the essence's own sample rate (ST2110-30);
+         * video RTP clock rate is fixed at 90 kHz for raw video (RFC 4175 /
+         * ST2110-20). */
+        uint32_t clock_rate = is_audio_slot
+                                  ? videomaster_context->audio_sample_rate
+                                  : 90000;
+        int64_t  pts_us;
+
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status,
+                      videomaster_context->avctx, videomaster_context->avctx,
+                      VHD_GetSlotRTPTimeStamp(slot_handle, &raw_rtp_timestamp),
+                      "RTP timestamp retrieved successfully",
+                      "Failed to retrieve RTP timestamp");
+
+        /* Unwrap the 32-bit RTP timestamp into a monotonic 64-bit sample
+         * count: the signed 32-bit difference between consecutive raw
+         * values is correct across a wraparound as long as the true gap
+         * between calls stays well under 2^31 samples, which always holds
+         * here. */
+        if (!*initialized)
+        {
+            *unwrapped = 0;
+            *initialized = true;
+        }
+        else
+        {
+            *unwrapped += (int32_t)(raw_rtp_timestamp - *last_raw);
+        }
+        *last_raw = raw_rtp_timestamp;
+
+        pts_us = av_rescale(*unwrapped, 1000000, clock_rate);
+        if (pts_us < 0)
+            pts_us = 0;
+        *timestamp = (uint64_t)pts_us;
+
+        av_log(videomaster_context->avctx, AV_LOG_DEBUG,
+               "RTP timestamp (%s): raw=%u unwrapped=%lli -> %llu us\n",
+               is_audio_slot ? "audio" : "video", raw_rtp_timestamp,
+               (long long)*unwrapped, (unsigned long long)*timestamp);
+    }
+    else if (source == AV_VIDEOMASTER_TIMESTAMP_PTP)
+    {
+        static uint64_t ptp_ts_base = 0;
+        ULONG           ptp_sec = 0, ptp_nsec = 0;
+
+        /* Board-level absolute PTP time: not tied to a specific slot (no
+         * per-slot PTP timestamp API in this SDK), so this is a live read
+         * at call time rather than a value stamped when the slot's data
+         * was captured. */
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status,
+                      videomaster_context->avctx, videomaster_context->avctx,
+                      VHD_GetPTPTime(videomaster_context->board_handle,
+                                    &ptp_sec, &ptp_nsec),
+                      "PTP time retrieved successfully",
+                      "Failed to retrieve PTP time");
+        *timestamp = (uint64_t)ptp_sec * 1000000 + ptp_nsec / 1000;
+        if (ptp_ts_base == 0)
+            ptp_ts_base = *timestamp;
+        *timestamp -= ptp_ts_base;
+
+        av_log(videomaster_context->avctx, AV_LOG_DEBUG,
+               "PTP timestamp: %llu us\n", (unsigned long long)*timestamp);
     }
     else
     {
@@ -1913,6 +2041,39 @@ bool ff_videomaster_is_ltc_on_board_timestamp_supported(
     return !!ltc_on_board_timestamp_supported;
 }
 
+bool ff_videomaster_is_ptp_supported(VideoMasterContext *videomaster_context)
+{
+    ULONG ptp_supported = 0;
+    if (videomaster_context->board_handle)
+        VHD_GetBoardCapability(videomaster_context->board_handle,
+                               VHD_IP_BOARD_CAP_PTP, &ptp_supported);
+    else
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Board handle is missing\n");
+    }
+
+    return !!ptp_supported;
+}
+
+bool ff_videomaster_is_ptp_locked(VideoMasterContext *videomaster_context)
+{
+    VHD_PTP_PORT_STATE ptp_port_state;
+    BOOL32             ptp_locked = FALSE;
+
+    if (!videomaster_context->board_handle)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Board handle is missing\n");
+        return false;
+    }
+    if (VHD_GetPTPPortState(videomaster_context->board_handle,
+                            &ptp_port_state, &ptp_locked) != VHDERR_NOERROR)
+        return false;
+
+    return !!ptp_locked;
+}
+
 int ff_videomaster_open_board_handle(VideoMasterContext *videomaster_context)
 {
     return ff_videomaster_handle_vhd_status(
@@ -2055,10 +2216,12 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
     if (av_error != 0)
         return av_error;
 
-    /* 5. Start the stream */
+    /* 5. Start the stream(s) */
     {
+        bool is_ip = videomaster_context->channel_type ==
+                     AV_VIDEOMASTER_CHANNEL_IP_2110;
         HANDLE start_handle = videomaster_context->stream_handle;
-        if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_IP_2110)
+        if (is_ip)
         {
             if (videomaster_context->ip_sync_mode)
                 start_handle = videomaster_context->ip_sync_handle;
@@ -2070,6 +2233,20 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
                       videomaster_context->avctx, videomaster_context->avctx,
                       VHD_StartStream(start_handle),
                       "Stream started successfully", "Failed to start stream");
+
+        /* IP non-sync mode with both essences: video and audio are two
+         * independent streams (unlike sync mode's single ip_sync_handle,
+         * or the single-essence cases above) — both must be started. */
+        if (is_ip && !videomaster_context->ip_sync_mode &&
+            videomaster_context->has_video && videomaster_context->has_audio)
+        {
+            GET_AND_CHECK(
+                ff_videomaster_handle_vhd_status, videomaster_context->avctx,
+                videomaster_context->avctx,
+                VHD_StartStream(videomaster_context->ip_audio_stream_handle),
+                "Audio stream started successfully",
+                "Failed to start audio stream");
+        }
     }
 
     av_log(videomaster_context->avctx, AV_LOG_TRACE,
@@ -2096,6 +2273,22 @@ int ff_videomaster_stop_stream(VideoMasterContext *videomaster_context)
         int ret = ff_videomaster_handle_vhd_status(
             videomaster_context->avctx, VHD_StopStream(stop_handle),
             "Stream stopped successfully", "Failed to stop stream");
+
+        /* Non-sync mode with both essences: video and audio are two
+         * independent streams that were both started in
+         * ff_videomaster_start_stream(), so both must be stopped too. */
+        if (!videomaster_context->ip_sync_mode &&
+            videomaster_context->has_video && videomaster_context->has_audio)
+        {
+            int audio_ret = ff_videomaster_handle_vhd_status(
+                videomaster_context->avctx,
+                VHD_StopStream(videomaster_context->ip_audio_stream_handle),
+                "Audio stream stopped successfully",
+                "Failed to stop audio stream");
+            if (ret == 0)
+                ret = audio_ret;
+        }
+
         ff_videomaster_leave_multicast_group(videomaster_context);
         ff_videomaster_close_streams_ip(videomaster_context);
         return ret;
@@ -2122,6 +2315,10 @@ const char *ff_videomaster_timestamp_type_to_string(
         return "ltc_onboard";
     case AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD:
         return "ltc_companion";
+    case AV_VIDEOMASTER_TIMESTAMP_RTP:
+        return "rtp";
+    case AV_VIDEOMASTER_TIMESTAMP_PTP:
+        return "ptp";
     default:
         return "unknown";
     }

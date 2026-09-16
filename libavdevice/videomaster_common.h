@@ -114,6 +114,10 @@ enum AVVideoMasterTimeStampType
     AV_VIDEOMASTER_TIMESTAMP_HARDWARE,
     AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD,
     AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD,
+    AV_VIDEOMASTER_TIMESTAMP_RTP,  ///< IP (ST2110) only: per-slot RTP media
+                                   ///< clock timestamp
+    AV_VIDEOMASTER_TIMESTAMP_PTP,  ///< IP only: the board's absolute PTP
+                                   ///< time (live read, not per-slot)
     AV_VIDEOMASTER_TIMESTAMP_NB
 };
 
@@ -243,7 +247,13 @@ typedef struct VideoMasterContext
     enum AVVideoMasterChannelType
         channel_type;  ///< type of the channel (HDMI or SDI)
     enum AVVideoMasterTimeStampType
-         timestamp_source;  ///< source of the timestamp
+        timestamp_source;  ///< source of the timestamp (video essence, and
+                           ///< SDI/HDMI's single shared essence)
+    enum AVVideoMasterTimeStampType
+         audio_timestamp_source;  ///< source of the timestamp for the IP
+                                  ///< audio essence (resolved: falls back to
+                                  ///< timestamp_source when not explicitly
+                                  ///< set via ip_audio_timestamp_source)
     bool dual_stream;  ///< true if the stream must be configured with 3G-B-DS
                        ///< interface
 
@@ -353,6 +363,23 @@ typedef struct VideoMasterContext
     uint32_t audio_slots_dropped;    ///< cumulative number of ST2110-30 audio
                                      ///< slots dropped (IP audio-only path)
 
+    /* RTP-timestamp-source unwrap state (32-bit RTP timestamp -> a
+     * monotonic 64-bit sample count), tracked separately per essence since
+     * video and audio have independent RTP media clocks. */
+    bool     rtp_ts_initialized_video;
+    uint32_t rtp_ts_last_raw_video;
+    int64_t  rtp_ts_unwrapped_video;
+    bool     rtp_ts_initialized_audio;
+    uint32_t rtp_ts_last_raw_audio;
+    int64_t  rtp_ts_unwrapped_audio;
+
+    /* HARDWARE-timestamp-source normalization base (first raw value seen,
+     * subtracted so pts starts near 0), tracked separately per essence:
+     * video's slot_handle and audio's ip_audio_slot_handle are independent
+     * hardware clocks, unlike osc/system which are one board-wide clock. */
+    uint64_t hw_ts_base_video;
+    uint64_t hw_ts_base_audio;
+
 } VideoMasterContext;
 
 /**
@@ -414,6 +441,9 @@ typedef struct VideoMasterData
     int64_t ip_audio_nb_channels;
     int64_t ip_audio_packet_time;
     int64_t ip_audio_format;
+    int64_t ip_audio_timestamp_source;  ///< pts source for the IP audio
+                                        ///< essence; -1 (default) means
+                                        ///< "follow timestamp_source"
     int64_t ip_sync;
 } VideoMasterData;
 
@@ -635,19 +665,25 @@ int ff_videomaster_get_nb_tx_channels(VideoMasterContext *videomaster_context);
  *
  * This function retrieves the current timestamp from the VideoMaster device
  * using the specified context. The timestamp is stored in the provided
- * timestamp
- * variable. The timestamp source is determined by the timestamp_source
- * field in the VideoMaster context.
+ * timestamp variable, in microseconds, relative to the first timestamp
+ * fetched for that slot/essence.
  *
  * @param videomaster_context The VideoMaster context to use.
  * @param slot_handle Handle of the locked slot to read the timestamp from
  * (the video slot, the audio-only slot, etc. — whichever slot was just
  * locked by the caller).
+ * @param source Which timestamp source to use for this call (osc/system,
+ * hardware, LTC on-board/companion card, or RTP — IP only for RTP). Callers
+ * pass the source resolved for the essence being read (video's
+ * timestamp_source, or audio's audio_timestamp_source), since IP allows the
+ * two essences to use different sources.
  * @param timestamp Pointer to store the retrieved timestamp.
  * @return 0 on success, or negative AVERROR code on failure:
  */
 int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
-                                 void *slot_handle, uint64_t *timestamp);
+                                 void               *slot_handle,
+                                 enum AVVideoMasterTimeStampType source,
+                                 uint64_t                       *timestamp);
 
 /**
  * @brief Retrieves video stream properties from a VideoMaster DELTACAST(c)
@@ -743,6 +779,24 @@ bool ff_videomaster_is_ltc_companion_card_supported(
  */
 bool ff_videomaster_is_ltc_on_board_timestamp_supported(
     VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Checks if the board supports Precision Time Protocol (PTP).
+ *
+ * @param videomaster_context The VideoMaster context to use.
+ * @return true if PTP is supported, false otherwise.
+ */
+bool ff_videomaster_is_ptp_supported(VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Checks if the board's PTP client is currently locked to a master
+ * clock.
+ *
+ * @param videomaster_context The VideoMaster context to use.
+ * @return true if PTP is locked, false otherwise (including on error, e.g.
+ * PTP not supported).
+ */
+bool ff_videomaster_is_ptp_locked(VideoMasterContext *videomaster_context);
 
 /**
  * @brief Opens a handle to the VideoMaster board.
