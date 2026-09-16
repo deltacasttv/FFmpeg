@@ -1625,14 +1625,17 @@ int ff_videomaster_close_streams_ip(VideoMasterContext *ctx)
         ctx->ip_sync_handle = NULL;
     }
 
-    /* Close audio essence handle */
+    /* Close audio essence handle. In sync mode the SDK still considers
+     * this stream a SyncStreams member (only released when the board
+     * handle closes), so closing it directly here would always fail —
+     * skip it and let ff_videomaster_close_board_handle() clean it up. */
     if (ctx->ip_audio_stream_handle)
     {
-        ff_videomaster_handle_vhd_status(ctx->avctx,
-                                         VHD_CloseStreamHandle(
-                                             ctx->ip_audio_stream_handle),
-                                         "Audio stream handle closed",
-                                         "Failed to close audio stream handle");
+        if (!ctx->ip_sync_mode)
+            ff_videomaster_handle_vhd_status(
+                ctx->avctx, VHD_CloseStreamHandle(ctx->ip_audio_stream_handle),
+                "Audio stream handle closed",
+                "Failed to close audio stream handle");
         ctx->ip_audio_stream_handle = NULL;
     }
 

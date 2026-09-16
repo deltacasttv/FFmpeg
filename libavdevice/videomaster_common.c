@@ -680,6 +680,16 @@ static int setup_transfer_scheme(VideoMasterContext *videomaster_context)
         VHD_SetStreamProperty(videomaster_context->stream_handle,
                               VHD_CORE_SP_TRANSFER_SCHEME, VHD_TRANSFER_SLAVED),
         "", "");
+
+    /* A StreamSync requires every member stream to use this transfer
+     * scheme, not just the main (video) one. */
+    if (videomaster_context->ip_sync_mode)
+        ff_videomaster_handle_vhd_status(
+            videomaster_context->avctx,
+            VHD_SetStreamProperty(videomaster_context->ip_audio_stream_handle,
+                                  VHD_CORE_SP_TRANSFER_SCHEME,
+                                  VHD_TRANSFER_SLAVED),
+            "", "");
     return 0;
 }
 

@@ -1249,7 +1249,13 @@ int ff_videomaster_read_close(AVFormatContext *avctx)
 
     if (videomaster_context->stream_handle)
     {
-        if (ff_videomaster_close_stream_handle(videomaster_context) != 0)
+        if (videomaster_context->ip_sync_mode)
+        {
+            /* Still a SyncStreams member; only the board handle close
+             * releases it — see ff_videomaster_close_streams_ip(). */
+            videomaster_context->stream_handle = NULL;
+        }
+        else if (ff_videomaster_close_stream_handle(videomaster_context) != 0)
         {
             av_log(avctx, AV_LOG_ERROR, "Failed to close stream handle: %d\n",
                    return_code);
