@@ -1685,10 +1685,9 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
                       "Timestamp retrieved "
                       "successfully",
                       "Failed to retrieve timestamp");
-        /* TEMPORARY diagnostic: compare the SDK-reported slot system time
-         * against a host wall-clock reference, to measure whether the two
-         * advance at the same rate (drift investigation for the IP
-         * audio-only slot). Remove once the root cause is confirmed. */
+        /* Diagnostic: the raw SDK slot timestamp next to a host wall-clock
+         * reference, to compare their rate when troubleshooting pts/timing
+         * issues (e.g. IP audio/video drift investigations). */
         av_log(videomaster_context->avctx, AV_LOG_DEBUG,
                "Raw system timestamp: %llu us (host ref: %lld us)\n",
                (unsigned long long)*timestamp,

@@ -1342,6 +1342,13 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
             audio_size, videomaster_context->audio_nb_channels,
             videomaster_context->audio_sample_size,
             videomaster_context->audio_sample_rate);
+        /* Diagnostic: the actual slot buffer size as returned by the SDK
+         * (before any of our own math) next to the duration derived from
+         * it, useful when troubleshooting whether a slot carries less
+         * audio than its nominal packet-time implies. */
+        av_log(avctx, AV_LOG_TRACE,
+               "Audio slot buffer: %u bytes -> duration %" PRId64 " us\n",
+               audio_size, pkt->duration);
         /* pts comes from the SDK's own per-slot timestamp, matching the
          * video branch and the same design DeckLink uses by default for its
          * audio essence (GetPacketTime) — trust the hardware/driver
