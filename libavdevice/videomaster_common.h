@@ -264,7 +264,7 @@ typedef struct VideoMasterContext
         video_frame_rate_num;  ///< base for the frame rate of the video stream
     uint32_t video_frame_rate_den;   ///< denominator for the frame rate of the
                                      ///< video stream
-    bool video_interlaced;           ///< interlaced mode of the video stream
+    bool     video_interlaced;       ///< interlaced mode of the video stream
     bool video_needs_field_reorder;  ///< frame buffer is top-half/bottom-half
     enum AVCodecID video_codec;      ///< codec ID of the video stream
     enum AVPixelFormat
@@ -297,28 +297,29 @@ typedef struct VideoMasterContext
     ULONG           ip_video_sdp_media_count;
 
     /* IP ST2110-30 audio essence fields. */
-    void    *ip_audio_stream_handle;
-    uint32_t ip_audio_destination;
-    uint32_t ip_audio_udp_port;
-    uint32_t ip_audio_source;
-    uint32_t ip_audio_udp_port_src;
-    uint32_t ip_audio_payload_type;
-    uint32_t ip_audio_sps_destination;
-    uint32_t ip_audio_sps_udp_port;
-    uint32_t ip_audio_sps_source;
-    uint32_t ip_audio_sps_udp_port_src;
-    uint32_t ip_audio_sps_payload_type;
+    void                     *ip_audio_stream_handle;
+    uint32_t                  ip_audio_destination;
+    uint32_t                  ip_audio_udp_port;
+    uint32_t                  ip_audio_source;
+    uint32_t                  ip_audio_udp_port_src;
+    uint32_t                  ip_audio_payload_type;
+    uint32_t                  ip_audio_sps_destination;
+    uint32_t                  ip_audio_sps_udp_port;
+    uint32_t                  ip_audio_sps_source;
+    uint32_t                  ip_audio_sps_udp_port_src;
+    uint32_t                  ip_audio_sps_payload_type;
     uint32_t                  ip_audio_channel_index;
     VHD_ST2110_30_FORMAT      ip_audio_format;
     VHD_ST2110_30_PACKET_TIME ip_audio_packet_time;
-    bool            ip_audio_sdp_mode;
-    VHD_SDP_MEDIA   ip_audio_sdp_media;  ///< parsed audio SDP entry (SSM source filter included)
-    void    *ip_sync_handle;
-    bool     ip_sync_mode;  ///< true when video+audio synced via StreamSyncHandle
-    void    *ip_audio_slot_handle;  ///< locked slot for audio-only / non-sync path
+    bool                      ip_audio_sdp_mode;
+    VHD_SDP_MEDIA ip_audio_sdp_media;  ///< parsed audio SDP entry (SSM source
+                                       ///< filter included)
+    void         *ip_sync_handle;
+    bool  ip_sync_mode;  ///< true when video+audio synced via StreamSyncHandle
+    void *ip_audio_slot_handle;  ///< locked slot for audio-only / non-sync path
 
     AVPacket *pending_packet;  ///< audio packet buffered from the current slot
-    float ltc_frame_rate;   ///< frame rate for LTC timestamp calculation
+    float     ltc_frame_rate;  ///< frame rate for LTC timestamp calculation
 
     // audio stream data
     bool           has_audio;    ///< true if the stream has audio data
@@ -347,6 +348,10 @@ typedef struct VideoMasterContext
     uint8_t *audio_buffer;           ///< buffer to store the audio data
     uint32_t audio_buffer_size;      ///< size of the audio buffer
     uint32_t audio_frames_received;  ///< number of audio frames received
+    uint32_t audio_slots_received;   ///< cumulative number of ST2110-30 audio
+                                     ///< slots received (IP audio-only path)
+    uint32_t audio_slots_dropped;    ///< cumulative number of ST2110-30 audio
+                                     ///< slots dropped (IP audio-only path)
 
 } VideoMasterContext;
 
@@ -592,6 +597,22 @@ int ff_videomaster_get_nb_rx_channels(VideoMasterContext *videomaster_context);
 int ff_videomaster_get_slots_counter(VideoMasterContext *videomaster_context);
 
 /**
+ * @brief Retrieves audio slot statistics from the VideoMaster device.
+ *
+ * Updates the videomaster_context with the number of ST2110-30 audio slots
+ * received (audio_slots_received) and dropped (audio_slots_dropped),
+ * cumulative since the audio stream was started, queried from the
+ * ip_audio_stream_handle stored in the videomaster_context structure.
+ *
+ * @param videomaster_context Pointer to the VideoMaster context to update with
+ * audio slot statistics
+ * @return 0 on success, or negative AVERROR code on failure:
+ *         AVERROR(EIO) for I/O error
+ */
+int ff_videomaster_get_audio_slots_counter(
+    VideoMasterContext *videomaster_context);
+
+/**
  * @brief Retrieves the number of available TX channels for a specified board.
  *
  * This function queries the VideoMaster DELTACAST(c) device to determine the
@@ -619,11 +640,14 @@ int ff_videomaster_get_nb_tx_channels(VideoMasterContext *videomaster_context);
  * field in the VideoMaster context.
  *
  * @param videomaster_context The VideoMaster context to use.
+ * @param slot_handle Handle of the locked slot to read the timestamp from
+ * (the video slot, the audio-only slot, etc. — whichever slot was just
+ * locked by the caller).
  * @param timestamp Pointer to store the retrieved timestamp.
  * @return 0 on success, or negative AVERROR code on failure:
  */
 int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
-                                 uint64_t           *timestamp);
+                                 void *slot_handle, uint64_t *timestamp);
 
 /**
  * @brief Retrieves video stream properties from a VideoMaster DELTACAST(c)

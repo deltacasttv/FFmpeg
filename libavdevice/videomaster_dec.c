@@ -1299,6 +1299,7 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
             memcpy(pkt->data, video_buf, video_size);
         pkt->stream_index = videomaster_context->video_stream->index;
         ff_videomaster_get_timestamp(videomaster_context,
+                                     videomaster_context->slot_handle,
                                      &videomaster_context->pts);
         pkt->pts = videomaster_context->pts;
         pkt->dts = pkt->pts;
@@ -1337,12 +1338,30 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
         }
         memcpy(pkt->data, audio_buf, audio_size);
         pkt->stream_index = videomaster_context->audio_stream->index;
-        pkt->pts = videomaster_context->pts;
-        pkt->dts = pkt->pts;
         pkt->duration = fill_audio_packet_duration(
             audio_size, videomaster_context->audio_nb_channels,
             videomaster_context->audio_sample_size,
             videomaster_context->audio_sample_rate);
+        /* pts comes from the SDK's own per-slot timestamp, matching the
+         * video branch and the same design DeckLink uses by default for its
+         * audio essence (GetPacketTime) — trust the hardware/driver
+         * timestamp rather than reconstructing one locally. */
+        ff_videomaster_get_timestamp(videomaster_context,
+                                     videomaster_context->ip_audio_slot_handle,
+                                     &videomaster_context->pts);
+        pkt->pts = videomaster_context->pts;
+        pkt->dts = pkt->pts;
+        if (ff_videomaster_get_audio_slots_counter(videomaster_context) != 0)
+        {
+            av_log(avctx, AV_LOG_ERROR, "Failed to get audio slots counter\n");
+        }
+        else
+        {
+            av_log(avctx, AV_LOG_TRACE,
+                   "%u audio slots received (%u dropped)\n",
+                   videomaster_context->audio_slots_received,
+                   videomaster_context->audio_slots_dropped);
+        }
         videomaster_context->audio_frames_received += audio_size;
         av_log(avctx, AV_LOG_TRACE, "%u audio frames received\n",
                videomaster_context->audio_frames_received);

@@ -1,6 +1,7 @@
 #include "libavutil/avstring.h"
 #include "libavutil/log.h"
 #include "libavutil/mem.h"
+#include "libavutil/time.h"
 #include "videomaster_hdmi.h"
 #include "videomaster_internal.h"
 #include "videomaster_ip.h"
@@ -1589,6 +1590,18 @@ int ff_videomaster_get_slots_counter(VideoMasterContext *videomaster_context)
     return 0;
 }
 
+int ff_videomaster_get_audio_slots_counter(
+    VideoMasterContext *videomaster_context)
+{
+    VHD_GetStreamProperty(videomaster_context->ip_audio_stream_handle,
+                          VHD_CORE_SP_SLOTS_COUNT,
+                          &videomaster_context->audio_slots_received);
+    VHD_GetStreamProperty(videomaster_context->ip_audio_stream_handle,
+                          VHD_CORE_SP_SLOTS_DROPPED,
+                          &videomaster_context->audio_slots_dropped);
+    return 0;
+}
+
 int ff_videomaster_get_nb_tx_channels(VideoMasterContext *videomaster_context)
 {
     return ff_videomaster_handle_vhd_status(
@@ -1603,14 +1616,14 @@ int ff_videomaster_get_nb_tx_channels(VideoMasterContext *videomaster_context)
 }
 
 int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
-                                 uint64_t           *timestamp)
+                                 void *slot_handle, uint64_t *timestamp)
 {
     int             av_error = 0;
     uint32_t        clock_frequency = 0;
     static uint64_t system_ts_base = 0;
     VHD_TIMECODE    time_code;
     float           total_frames = 0;
-    if (videomaster_context->slot_handle == NULL)
+    if (slot_handle == NULL)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
                "Slot handle is NULL, cannot "
@@ -1621,15 +1634,14 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
     if (videomaster_context->timestamp_source ==
         AV_VIDEOMASTER_TIMESTAMP_HARDWARE)
     {
-        GET_AND_CHECK(
-            ff_videomaster_handle_vhd_status, videomaster_context->avctx,
-            videomaster_context->avctx,
-            VHD_GetSlotHardwareTimestamp(videomaster_context->slot_handle,
-                                         timestamp, &clock_frequency),
-            "Hardware Timestamp retrieved "
-            "successfully",
-            "Failed to retrieve hardware "
-            "timestamp");
+        GET_AND_CHECK(ff_videomaster_handle_vhd_status,
+                      videomaster_context->avctx, videomaster_context->avctx,
+                      VHD_GetSlotHardwareTimestamp(slot_handle, timestamp,
+                                                   &clock_frequency),
+                      "Hardware Timestamp retrieved "
+                      "successfully",
+                      "Failed to retrieve hardware "
+                      "timestamp");
         *timestamp = (*timestamp * 1000000) / clock_frequency;
         av_log(videomaster_context->avctx, AV_LOG_DEBUG,
                "Hardware timestamp: %lli\n", *timestamp);
@@ -1643,7 +1655,7 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
             ff_videomaster_handle_vhd_status, videomaster_context->avctx,
             videomaster_context->avctx,
             VHD_GetSlotTimecode(
-                videomaster_context->slot_handle,
+                slot_handle,
                 (VHD_TIMECODE_SOURCE)
                     get_videomaster_enumeration_value_for_timestamp_source(
                         videomaster_context->timestamp_source),
@@ -1669,11 +1681,18 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
 
         GET_AND_CHECK(ff_videomaster_handle_vhd_status,
                       videomaster_context->avctx, videomaster_context->avctx,
-                      VHD_GetSlotSystemTime(videomaster_context->slot_handle,
-                                            timestamp),
+                      VHD_GetSlotSystemTime(slot_handle, timestamp),
                       "Timestamp retrieved "
                       "successfully",
                       "Failed to retrieve timestamp");
+        /* TEMPORARY diagnostic: compare the SDK-reported slot system time
+         * against a host wall-clock reference, to measure whether the two
+         * advance at the same rate (drift investigation for the IP
+         * audio-only slot). Remove once the root cause is confirmed. */
+        av_log(videomaster_context->avctx, AV_LOG_DEBUG,
+               "Raw system timestamp: %llu us (host ref: %lld us)\n",
+               (unsigned long long)*timestamp,
+               (long long)av_gettime_relative());
         // Normalize system timestamp to start
         // at zero
         if (system_ts_base == 0)

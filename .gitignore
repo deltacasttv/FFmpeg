@@ -43,3 +43,4 @@
 /tools/python/__pycache__/
 .vscode/
 CLAUDE.md
+.clang-format
