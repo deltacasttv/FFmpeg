@@ -225,6 +225,35 @@ int ff_videomaster_lock_next_slot_ip(VideoMasterContext *ctx,
 
 /** @brief Unlocks the slot obtained from ff_videomaster_lock_next_slot_ip. */
 int ff_videomaster_unlock_slot_ip(VideoMasterContext *ctx, void *slot);
+
+/**
+ * @brief Starts the dedicated IP audio capture thread (non-sync combined
+ * mode only: has_video && has_audio && !ip_sync_mode).
+ *
+ * The thread locks the audio essence's slots in a loop, at its own pace,
+ * independently of however often read_packet() is called for video —
+ * building a timestamped AVPacket per slot and pushing it to
+ * ctx->ip_audio_queue. Must be called after the audio stream has been
+ * started (VHD_StartStream on ip_audio_stream_handle).
+ *
+ * @param ctx The VideoMaster context to use.
+ * @return 0 on success, negative AVERROR code on failure.
+ */
+int ff_videomaster_start_ip_audio_thread(VideoMasterContext *ctx);
+
+/**
+ * @brief Stops and joins the dedicated IP audio capture thread started by
+ * ff_videomaster_start_ip_audio_thread(), and tears down ctx->ip_audio_queue.
+ *
+ * Must be called after the audio stream has been stopped (VHD_StopStream on
+ * ip_audio_stream_handle), so the thread's blocked slot lock unblocks with
+ * an error and the thread can exit its loop. A no-op if the thread was never
+ * started.
+ *
+ * @param ctx The VideoMaster context to use.
+ */
+void ff_videomaster_stop_ip_audio_thread(VideoMasterContext *ctx);
+
 /* ---- IP network parameter helpers ---- */
 
 /** Input fields from VideoMasterData for one IP essence (video or audio). */

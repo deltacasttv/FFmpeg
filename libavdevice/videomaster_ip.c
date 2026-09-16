@@ -1225,9 +1225,10 @@ int ff_videomaster_lock_next_slot_ip(VideoMasterContext *ctx,
         return 0;
     }
 
-    if (ctx->has_video && !ctx->has_audio)
+    if (ctx->has_video)
     {
-        /* video-only: use existing path via ff_videomaster_get_data */
+        /* Video-only, or non-sync video+audio (audio is handled by its own
+         * capture thread — see ff_videomaster_start_ip_audio_thread()). */
         int ret = ff_videomaster_get_data(ctx);
         if (ret != 0)
             return ret;
@@ -1237,42 +1238,18 @@ int ff_videomaster_lock_next_slot_ip(VideoMasterContext *ctx,
         return 0;
     }
 
-    if (!ctx->has_video && ctx->has_audio)
-    {
-        /* audio-only: lock the audio essence handle directly */
-        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
-                      VHD_LockSlotHandle(ctx->ip_audio_stream_handle,
-                                         &ctx->ip_audio_slot_handle),
-                      "Audio slot locked", "Failed to lock audio slot");
-        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
-                      VHD_GetSlotBuffer(ctx->ip_audio_slot_handle,
-                                        VHD_ST2110_BT_AUDIO, (BYTE **)audio_buf,
-                                        audio_size),
-                      "", "Failed to get audio buffer");
-        *slot_to_unlock = ctx->ip_audio_slot_handle;
-        return 0;
-    }
-
-    /* non-sync video+audio: lock each essence independently (no timing guarantee) */
-    {
-        int ret = ff_videomaster_get_data(ctx);
-        if (ret != 0)
-            return ret;
-        *video_buf = ctx->video_buffer;
-        *video_size = ctx->video_buffer_size;
-
-        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
-                      VHD_LockSlotHandle(ctx->ip_audio_stream_handle,
-                                         &ctx->ip_audio_slot_handle),
-                      "Audio slot locked", "Failed to lock audio slot");
-        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
-                      VHD_GetSlotBuffer(ctx->ip_audio_slot_handle,
-                                        VHD_ST2110_BT_AUDIO,
-                                        (BYTE **)audio_buf, audio_size),
-                      "", "Failed to get audio buffer");
-        *slot_to_unlock = NULL;
-        return 0;
-    }
+    /* audio-only (no video at all): lock the audio essence handle directly */
+    GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
+                  VHD_LockSlotHandle(ctx->ip_audio_stream_handle,
+                                     &ctx->ip_audio_slot_handle),
+                  "Audio slot locked", "Failed to lock audio slot");
+    GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
+                  VHD_GetSlotBuffer(ctx->ip_audio_slot_handle,
+                                    VHD_ST2110_BT_AUDIO, (BYTE **)audio_buf,
+                                    audio_size),
+                  "", "Failed to get audio buffer");
+    *slot_to_unlock = ctx->ip_audio_slot_handle;
+    return 0;
 }
 
 int ff_videomaster_unlock_slot_ip(VideoMasterContext *ctx, void *slot)
@@ -1285,28 +1262,130 @@ int ff_videomaster_unlock_slot_ip(VideoMasterContext *ctx, void *slot)
                                                 "Failed to unlock sync slot");
     }
 
-    if (ctx->has_video && !ctx->has_audio)
+    if (ctx->has_video)
+        /* Audio is unlocked by its own capture thread in non-sync mode. */
         return ff_videomaster_release_data(ctx);
 
-    if (!ctx->has_video && ctx->has_audio)
+    /* audio-only (no video at all): just unlock, no av_malloc'd buffer to free
+     */
     {
-        /* audio-only: just unlock, no av_malloc'd buffer to free */
         int ret = ff_videomaster_handle_vhd_status(
             ctx->avctx, VHD_UnlockSlotHandle(slot), "",
             "Failed to unlock audio slot");
         ctx->ip_audio_slot_handle = NULL;
         return ret;
     }
+}
 
-    /* non-sync video+audio: release both slots independently */
+/* A few seconds' worth of typical ST2110-30 traffic. */
+#define VIDEOMASTER_IP_AUDIO_QUEUE_MAX_BYTES (4 * 1024 * 1024)
+
+/* Locks IP audio slots in a loop at its own pace, decoupled from however
+ * often read_packet() is called for video, and pushes a timestamped
+ * AVPacket per slot to ctx->ip_audio_queue. Exits once VHD_LockSlotHandle
+ * fails, which happens when the caller stops the audio stream. */
+static void *ip_audio_capture_thread(void *arg)
+{
+    VideoMasterContext *ctx = (VideoMasterContext *)arg;
+
+    for (;;)
     {
-        int ret = ff_videomaster_release_data(ctx);
-        int ret2 = ff_videomaster_handle_vhd_status(
-            ctx->avctx, VHD_UnlockSlotHandle(ctx->ip_audio_slot_handle),
-            "", "Failed to unlock audio slot");
+        void    *slot = NULL;
+        uint8_t *audio_buf = NULL;
+        uint32_t audio_size = 0;
+        uint64_t audio_pts = 0;
+        AVPacket pkt = { 0 };
+
+        {
+            VHD_ERRORCODE lock_status = (VHD_ERRORCODE)
+                VHD_LockSlotHandle(ctx->ip_audio_stream_handle, &slot);
+            if (lock_status == VHDERR_TIMEOUT)
+                continue; /* transient: no slot ready yet, try again */
+            if (ff_videomaster_handle_vhd_status(ctx->avctx, lock_status, "",
+                                                 "") != 0)
+                break; /* stream stopped (or a real error): exit the loop */
+        }
+
+        if (ff_videomaster_handle_vhd_status(
+                ctx->avctx,
+                VHD_GetSlotBuffer(slot, VHD_ST2110_BT_AUDIO,
+                                  (BYTE **)&audio_buf, &audio_size),
+                "",
+                "Failed to get audio buffer (IP audio capture thread)") != 0 ||
+            !audio_buf || audio_size == 0)
+        {
+            VHD_UnlockSlotHandle(slot);
+            continue;
+        }
+
+        /* Only this thread touches ip_audio_slot_handle while it runs, so
+         * no locking is needed to set it here for get_timestamp()'s use. */
+        ctx->ip_audio_slot_handle = slot;
+        ff_videomaster_get_timestamp(ctx, slot, ctx->audio_timestamp_source,
+                                     &audio_pts);
+
+        if (ff_videomaster_get_audio_slots_counter(ctx) != 0)
+            av_log(ctx->avctx, AV_LOG_ERROR,
+                   "Failed to get audio slots counter (IP audio capture "
+                   "thread)\n");
+        else
+            av_log(ctx->avctx, AV_LOG_TRACE,
+                   "%u audio slots received (%u dropped)\n",
+                   ctx->audio_slots_received, ctx->audio_slots_dropped);
+        ctx->audio_frames_received += audio_size;
+        av_log(ctx->avctx, AV_LOG_TRACE, "%u audio frames received\n",
+               ctx->audio_frames_received);
+
+        pkt.data = audio_buf;
+        pkt.size = audio_size;
+        pkt.stream_index = ctx->audio_stream->index;
+        pkt.pts = (int64_t)audio_pts;
+        pkt.dts = pkt.pts;
+        pkt.duration = ff_videomaster_fill_audio_packet_duration(
+            audio_size, ctx->audio_nb_channels, ctx->audio_sample_size,
+            ctx->audio_sample_rate);
+
+        /* put() copies the data before returning, so unlocking right after
+         * is safe even though audio_buf points into the slot's own memory. */
+        ff_videomaster_packet_queue_put(&ctx->ip_audio_queue, &pkt);
+
         ctx->ip_audio_slot_handle = NULL;
-        return ret != 0 ? ret : ret2;
+        ff_videomaster_handle_vhd_status(
+            ctx->avctx, VHD_UnlockSlotHandle(slot), "",
+            "Failed to unlock audio slot (IP audio capture thread)");
     }
+
+    return NULL;
+}
+
+int ff_videomaster_start_ip_audio_thread(VideoMasterContext *ctx)
+{
+    ff_videomaster_packet_queue_init(ctx->avctx, &ctx->ip_audio_queue,
+                                     VIDEOMASTER_IP_AUDIO_QUEUE_MAX_BYTES);
+    if (pthread_create(&ctx->ip_audio_thread, NULL, ip_audio_capture_thread,
+                       ctx) != 0)
+    {
+        av_log(ctx->avctx, AV_LOG_ERROR,
+               "Failed to start IP audio capture thread\n");
+        ff_videomaster_packet_queue_end(&ctx->ip_audio_queue);
+        return AVERROR(EIO);
+    }
+    ctx->ip_audio_thread_active = true;
+    return 0;
+}
+
+void ff_videomaster_stop_ip_audio_thread(VideoMasterContext *ctx)
+{
+    if (!ctx->ip_audio_thread_active)
+        return;
+    /* The audio stream must already be stopped by the caller
+     * (VHD_StopStream on ip_audio_stream_handle) so the thread's blocked
+     * VHD_LockSlotHandle call unblocks with an error and the loop above
+     * actually exits. */
+    ff_videomaster_packet_queue_abort(&ctx->ip_audio_queue);
+    pthread_join(ctx->ip_audio_thread, NULL);
+    ff_videomaster_packet_queue_end(&ctx->ip_audio_queue);
+    ctx->ip_audio_thread_active = false;
 }
 
 int ff_videomaster_parse_audio_sdp_file(VideoMasterData    *videomaster_data,

@@ -30,8 +30,10 @@
 #define AVDEVICE_VIDEOMASTER_COMMON_H
 
 #include "libavcodec/avcodec.h"
+#include "libavcodec/packet_internal.h"
 #include "libavdevice/avdevice.h"
 #include "libavutil/avutil.h"
+#include "libavutil/thread.h"
 
 #if defined(__APPLE__)
 #include <VideoMasterHD/VideoMasterHD_Core.h>
@@ -221,6 +223,27 @@ union VideoMasterAudioInfo
 };
 
 /**
+ * @brief Thread-safe FIFO of AVPackets.
+ *
+ * Used by the IP non-sync combined mode's dedicated audio capture thread
+ * (see videomaster_ip.c) to hand off audio AVPackets to read_packet(),
+ * decoupling the audio essence's real arrival rate from however often
+ * read_packet() is called for video. Bounded by max_q_size (bytes); packets
+ * are dropped (with a warning) rather than blocking the producer once full.
+ */
+typedef struct VideoMasterPacketQueue
+{
+    PacketList         pkt_list;
+    int                nb_packets;
+    unsigned long long size;
+    int                abort_request;
+    AVMutex            mutex;
+    AVCond             cond;
+    AVFormatContext   *avctx;
+    int64_t            max_q_size;
+} VideoMasterPacketQueue;
+
+/**
  * @brief Main operational context for the VideoMaster DELTACAST(c) device
  * integration.
  *
@@ -363,8 +386,7 @@ typedef struct VideoMasterContext
     uint32_t audio_slots_dropped;    ///< cumulative number of ST2110-30 audio
                                      ///< slots dropped (IP audio-only path)
 
-    /* RTP-timestamp-source unwrap state (32-bit RTP timestamp -> a
-     * monotonic 64-bit sample count), tracked separately per essence since
+    /* RTP timestamp unwrap state (32-bit -> monotonic 64-bit), per essence:
      * video and audio have independent RTP media clocks. */
     bool     rtp_ts_initialized_video;
     uint32_t rtp_ts_last_raw_video;
@@ -373,12 +395,16 @@ typedef struct VideoMasterContext
     uint32_t rtp_ts_last_raw_audio;
     int64_t  rtp_ts_unwrapped_audio;
 
-    /* HARDWARE-timestamp-source normalization base (first raw value seen,
-     * subtracted so pts starts near 0), tracked separately per essence:
-     * video's slot_handle and audio's ip_audio_slot_handle are independent
-     * hardware clocks, unlike osc/system which are one board-wide clock. */
+    /* Hardware timestamp normalization base, per essence (independent
+     * hardware clocks, unlike the single board-wide osc/system clock). */
     uint64_t hw_ts_base_video;
     uint64_t hw_ts_base_audio;
+
+    /* Non-sync IP audio capture thread + its packet queue (see
+     * videomaster_ip.c). */
+    bool                   ip_audio_thread_active;
+    pthread_t              ip_audio_thread;
+    VideoMasterPacketQueue ip_audio_queue;
 
 } VideoMasterContext;
 
@@ -584,6 +610,60 @@ enum AVVideoMasterChannelType ff_videomaster_get_channel_type_from_index(
  *         AVERROR(EIO) for I/O error
  */
 int ff_videomaster_get_data(VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Computes an AVPacket duration for a raw PCM audio buffer.
+ *
+ * @param buf_size Size of the audio buffer, in bytes.
+ * @param nb_channels Number of audio channels.
+ * @param sample_size Bits per sample.
+ * @param sample_rate Sample rate, in Hz.
+ * @return Duration in microseconds (at least 1).
+ */
+int64_t ff_videomaster_fill_audio_packet_duration(uint32_t buf_size,
+                                                  uint32_t nb_channels,
+                                                  uint32_t sample_size,
+                                                  uint32_t sample_rate);
+
+/**
+ * @brief Initializes a VideoMasterPacketQueue.
+ * @param avctx AVFormatContext used for logging.
+ * @param q Queue to initialize.
+ * @param max_q_size Maximum queue size, in bytes, before packets get dropped.
+ */
+void ff_videomaster_packet_queue_init(AVFormatContext        *avctx,
+                                      VideoMasterPacketQueue *q,
+                                      int64_t                 max_q_size);
+
+/**
+ * @brief Flushes and destroys a VideoMasterPacketQueue. Safe to call even if
+ * a producer might still (briefly) reference it — callers must have already
+ * stopped/joined the producer thread first.
+ */
+void ff_videomaster_packet_queue_end(VideoMasterPacketQueue *q);
+
+/**
+ * @brief Requests any blocked ff_videomaster_packet_queue_get() call to
+ * return, and marks the queue as aborted so producers can stop cleanly.
+ */
+void ff_videomaster_packet_queue_abort(VideoMasterPacketQueue *q);
+
+/**
+ * @brief Appends a packet to the queue, taking ownership of its reference.
+ * @return 0 on success; a negative value if the queue is full (the packet is
+ * unreferenced and a warning is logged) or on allocation failure.
+ */
+int ff_videomaster_packet_queue_put(VideoMasterPacketQueue *q, AVPacket *pkt);
+
+/**
+ * @brief Removes and returns the oldest packet in the queue.
+ * @param block If non-zero, wait until a packet is available or the queue is
+ * aborted; if zero, return AVERROR(EAGAIN) immediately when empty.
+ * @return 0 on success, AVERROR(EAGAIN) if empty and non-blocking (or
+ * aborted), negative AVERROR otherwise.
+ */
+int ff_videomaster_packet_queue_get(VideoMasterPacketQueue *q, AVPacket *pkt,
+                                    int block);
 
 /**
  * @brief Rejects IP video parameters for non-IP channel types (SDI, HDMI).

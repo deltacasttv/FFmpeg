@@ -1139,11 +1139,13 @@ static int setup_video_stream(VideoMasterContext *videomaster_context)
 
 /**** Public functions definitions */
 
-/* Computes AVPacket duration for a raw PCM audio buffer. */
-static int64_t fill_audio_packet_duration(uint32_t buf_size,
-                                          uint32_t nb_channels,
-                                          uint32_t sample_size,
-                                          uint32_t sample_rate)
+/* Computes AVPacket duration for a raw PCM audio buffer. Exported (not
+ * static) so the IP non-sync audio capture thread (videomaster_ip.c) can use
+ * it too when building its own AVPackets independently of read_packet. */
+int64_t ff_videomaster_fill_audio_packet_duration(uint32_t buf_size,
+                                                  uint32_t nb_channels,
+                                                  uint32_t sample_size,
+                                                  uint32_t sample_rate)
 {
     if (nb_channels == 0 || sample_size == 0 || sample_rate == 0)
         return 1;
@@ -1354,6 +1356,15 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
         return 0;
     }
 
+    /* Drain the IP non-sync audio thread's queue preferentially, so
+     * backlog never builds up waiting on the next video frame. */
+    if (videomaster_context->ip_audio_thread_active &&
+        ff_videomaster_packet_queue_get(&videomaster_context->ip_audio_queue,
+                                        pkt, 0) == 0)
+    {
+        return 0;
+    }
+
     uint8_t *video_buf = NULL;
     uint32_t video_size = 0;
     uint8_t *audio_buf = NULL;
@@ -1458,21 +1469,13 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
         }
         memcpy(pkt->data, audio_buf, audio_size);
         pkt->stream_index = videomaster_context->audio_stream->index;
-        pkt->duration = fill_audio_packet_duration(
+        pkt->duration = ff_videomaster_fill_audio_packet_duration(
             audio_size, videomaster_context->audio_nb_channels,
             videomaster_context->audio_sample_size,
             videomaster_context->audio_sample_rate);
-        /* Diagnostic: the actual slot buffer size as returned by the SDK
-         * (before any of our own math) next to the duration derived from
-         * it, useful when troubleshooting whether a slot carries less
-         * audio than its nominal packet-time implies. */
         av_log(avctx, AV_LOG_TRACE,
                "Audio slot buffer: %u bytes -> duration %" PRId64 " us\n",
                audio_size, pkt->duration);
-        /* pts comes from the SDK's own per-slot timestamp, matching the
-         * video branch and the same design DeckLink uses by default for its
-         * audio essence (GetPacketTime) — trust the hardware/driver
-         * timestamp rather than reconstructing one locally. */
         ff_videomaster_get_timestamp(
             videomaster_context, videomaster_context->ip_audio_slot_handle,
             videomaster_context->audio_timestamp_source,
@@ -1495,7 +1498,9 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
                videomaster_context->audio_frames_received);
     }
 
-    /* Pre-buffer audio packet when both video and audio are present */
+    /* Pre-buffer audio packet when both video and audio are present.
+     * Sync mode only in practice: non-sync mode never fills audio_buf here
+     * anymore (that essence is serviced by ip_audio_thread instead). */
     if (videomaster_context->has_video && videomaster_context->has_audio &&
         audio_buf && audio_size > 0 && videomaster_context->audio_stream)
     {
@@ -1512,28 +1517,9 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
             AVPacket *apkt = videomaster_context->pending_packet;
             memcpy(apkt->data, audio_buf, audio_size);
             apkt->stream_index = videomaster_context->audio_stream->index;
-            if (videomaster_context->ip_sync_mode)
-            {
-                /* Sync mode: video and audio are locked together on one
-                 * shared slot, so sharing the timestamp already computed
-                 * for the video packet above is correct by construction. */
-                apkt->pts = videomaster_context->pts;
-            }
-            else
-            {
-                /* Non-sync mode: audio is a genuinely independent essence,
-                 * locked from its own slot — timestamp it from its own
-                 * resolved source instead of silently inheriting video's
-                 * pts. */
-                uint64_t audio_pts = 0;
-                ff_videomaster_get_timestamp(
-                    videomaster_context,
-                    videomaster_context->ip_audio_slot_handle,
-                    videomaster_context->audio_timestamp_source, &audio_pts);
-                apkt->pts = audio_pts;
-            }
+            apkt->pts = videomaster_context->pts;
             apkt->dts = apkt->pts;
-            apkt->duration = fill_audio_packet_duration(
+            apkt->duration = ff_videomaster_fill_audio_packet_duration(
                 audio_size, videomaster_context->audio_nb_channels,
                 videomaster_context->audio_sample_size,
                 videomaster_context->audio_sample_rate);
