@@ -245,9 +245,14 @@ int ff_videomaster_start_ip_audio_thread(VideoMasterContext *ctx);
  * @brief Stops and joins the dedicated IP audio capture thread started by
  * ff_videomaster_start_ip_audio_thread(), and tears down ctx->ip_audio_queue.
  *
- * Must be called after the audio stream has been stopped (VHD_StopStream on
- * ip_audio_stream_handle), so the thread's blocked slot lock unblocks with
- * an error and the thread can exit its loop. A no-op if the thread was never
+ * Must be called *before* the audio stream is stopped (VHD_StopStream on
+ * ip_audio_stream_handle), not after: the audio stream is still running
+ * while this waits, so the thread keeps locking/processing slots normally
+ * and notices the stop request on its own at its next safe point (see
+ * ip_audio_capture_thread() in videomaster_ip.c) — no need for
+ * VHD_StopStream to unblock it. Calling VHD_StopStream first used to race
+ * with the thread still mid-iteration on a locked slot, causing an
+ * intermittent access-violation crash. A no-op if the thread was never
  * started.
  *
  * @param ctx The VideoMaster context to use.

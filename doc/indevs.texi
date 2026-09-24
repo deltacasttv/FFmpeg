@@ -1554,6 +1554,21 @@ Specifies the buffer packing format and whether to enable the FPGA's color space
 @item dual_stream
 Force the 3G-B dual stream interface when it cannot be auto-detected. A 3G Level B-DS stream received on the RX0 physical connector is split into two independent streams: one RX0 stream receives the A link and one RX1 stream receives the B link. When enabled, FFmpeg expects the two streams to be provided on consecutive channels (RX0 for the A link, RX1 for the B link). This option is only relevant for SDI 3G Level B-DS signals. An error is displayed if the selected board and channel do not support the 3G-B dual stream interface. Accepted values are @option{1} (or @option{true}) to enable dual stream mode, and @option{0} (or @option{false}) to disable it. Default is @option{false}.
 
+@item no_data_timeout
+End the capture with an error once no packet has been received for this long (for example: no signal on the input, or an IP source filter rejecting every sender). The value is a duration (e.g. @option{10} or @option{10s}). A capture that never receives anything can otherwise not be stopped with @key{q} or a single @key{Ctrl+C}, and @option{-t} has no effect on it since no timestamp ever advances. The check happens once per slot lock timeout (10 seconds), so the actual delay is rounded up to that. Default is @option{0}, which waits forever.
+
+@item sources_loglevel
+Log level applied while listing the available sources with @code{-sources}.
+@code{-sources} otherwise forces the @samp{warning} level during the
+enumeration, whatever @code{-loglevel} is set to. Accepts the same level names
+as @code{-loglevel} (@samp{quiet}, @samp{panic}, @samp{fatal}, @samp{error},
+@samp{warning}, @samp{info}, @samp{verbose}, @samp{debug}, @samp{trace}). Only
+used by the source listing. Defaults to -1 (keep the level set by the tool).
+For example:
+@example
+ffmpeg -sources videomaster,sources_loglevel=trace
+@end example
+
 @item ip_video_destination
 IPv4 destination address of the main ST2110-20 video stream in explicit mode.
 

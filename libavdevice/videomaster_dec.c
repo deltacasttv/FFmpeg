@@ -376,6 +376,16 @@ static int check_header_arguments(VideoMasterData    *videomaster_data,
         }
     }
 
+    /* Must happen before the lock check below: a channel in loopback never
+     * locks. The original state is restored when the board handle is closed.
+     */
+    if ((status = ff_videomaster_disable_loopback(videomaster_context)) != 0)
+    {
+        return handle_board_error(videomaster_context,
+                                  "Failed to disable loopback on channel",
+                                  status);
+    }
+
     if ((status = check_channel_integrity(videomaster_context)) != 0)
     {
         return handle_board_error(videomaster_context,
@@ -994,7 +1004,7 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
                 return ret;
         }
 
-        if (has_audio_explicit || has_audio_sdp)
+        if (has_audio_explicit)
         {
             if (videomaster_data->ip_audio_nb_channels < 1 ||
                 videomaster_data->ip_audio_nb_channels > 64)
@@ -1034,6 +1044,15 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
                                 (has_audio_sdp &&
                                  videomaster_context->ip_audio_destination !=
                                      0);
+            if (videomaster_data->ip_sync != 0 && has_video_ip != has_audio_ip)
+            {
+                av_log(avctx, AV_LOG_ERROR,
+                       "ip_sync requires both video and audio to be "
+                       "configured; use ip_sync 0 for single-essence "
+                       "capture.\n");
+                return AVERROR(EINVAL);
+            }
+
             videomaster_context->ip_sync_mode = has_video_ip && has_audio_ip &&
                                                 (videomaster_data->ip_sync !=
                                                  0);
@@ -1174,8 +1193,31 @@ static void unlock_slot_dispatch(VideoMasterContext *ctx, void *slot)
     }
 }
 
+static int list_input_devices(AVFormatContext         *avctx,
+                              struct AVDeviceInfoList *device_list);
+
 int ff_videomaster_list_input_devices(AVFormatContext         *avctx,
                                       struct AVDeviceInfoList *device_list)
+{
+    struct VideoMasterData *videomaster_data = avctx->priv_data;
+    int                     previous_log_level = av_log_get_level();
+    int                     ret;
+
+    /* fftools' show_sources() forces AV_LOG_WARNING during the enumeration,
+     * which hides -loglevel: sources_loglevel lets the user override it for
+     * the time of the listing only. */
+    if (videomaster_data && videomaster_data->sources_loglevel != -1)
+        av_log_set_level((int)videomaster_data->sources_loglevel);
+
+    ret = list_input_devices(avctx, device_list);
+
+    av_log_set_level(previous_log_level);
+
+    return ret;
+}
+
+static int list_input_devices(AVFormatContext         *avctx,
+                              struct AVDeviceInfoList *device_list)
 {
     struct VideoMasterData    *videomaster_data = NULL;
     struct VideoMasterContext *videomaster_context = NULL;
@@ -1299,6 +1341,7 @@ int ff_videomaster_read_header(AVFormatContext *avctx)
 {
     struct VideoMasterData    *videomaster_data = NULL;
     struct VideoMasterContext *videomaster_context = NULL;
+    int                        status;
 
     if (extract_context_or_log(avctx, &videomaster_data,
                                &videomaster_context) != 0)
@@ -1312,38 +1355,51 @@ int ff_videomaster_read_header(AVFormatContext *avctx)
         return AVERROR(EINVAL);
     }
 
-    if (ff_videomaster_get_api_info(videomaster_context) != 0)
+    if ((status = ff_videomaster_get_api_info(videomaster_context)) != 0)
     {
         av_log(avctx, AV_LOG_ERROR,
                "Failed to get API version or number of boards\n");
-        return AVERROR(EIO);
+        return status;
     }
 
-    if (check_header_arguments(videomaster_data, videomaster_context) != 0)
+    if ((status = check_header_arguments(videomaster_data,
+                                         videomaster_context)) != 0)
     {
         av_log(avctx, AV_LOG_ERROR,
                "Failed to check header arguments integrity\n");
-        return AVERROR(EIO);
+        return status;
     }
 
     if ((videomaster_context->has_video || videomaster_context->has_audio) &&
-        (ff_videomaster_start_stream(videomaster_context) != 0))
+        (status = ff_videomaster_start_stream(videomaster_context)) != 0)
     {
         return handle_stream_error(videomaster_context,
-                                   "Failed to start stream\n", AVERROR(EIO));
+                                   "Failed to start stream\n", status);
     }
 
-    if (setup_streams(videomaster_context) != 0)
+    if ((status = setup_streams(videomaster_context)) != 0)
     {
         return handle_stream_error(videomaster_context,
                                    "Failed to setup Audio and Video streams\n",
-                                   AVERROR(EIO));
+                                   status);
     }
+
+    videomaster_context->last_data_time = av_gettime_relative();
 
     return 0;
 }
 
-int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
+/* Equivalent to libavformat's internal ff_check_interrupt(), reimplemented
+ * locally rather than pulling in a libavformat-internal header from
+ * libavdevice: AVIOInterruptCB is public API (avio.h), so this is just its
+ * trivial dereference. */
+static int videomaster_check_interrupt(AVFormatContext *avctx)
+{
+    AVIOInterruptCB *cb = &avctx->interrupt_callback;
+    return cb->callback && cb->callback(cb->opaque);
+}
+
+static int read_packet_internal(AVFormatContext *avctx, AVPacket *pkt)
 {
     struct VideoMasterData    *videomaster_data = NULL;
     struct VideoMasterContext *videomaster_context = NULL;
@@ -1369,6 +1425,23 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
                                         pkt, 0) == 0)
     {
         return 0;
+    }
+
+    /* Every other path above this point returns quickly (a pre-buffered
+     * packet, or a non-blocking queue drain); the slot lock below is the
+     * one call that can block for a while (up to the stream's I/O timeout,
+     * which for IP is left at the SDK's own default — see the "not
+     * applicable for IP" comment in setup_streams(), now suspect: this is
+     * exactly what made a zero-data capture — e.g. an RX source filter
+     * correctly rejecting a non-matching sender, see S19c — unresponsive
+     * to -t/Ctrl+C, since read_packet() returning AVERROR(EAGAIN) here
+     * repeatedly is what should let the caller notice a stop request
+     * between attempts, but nothing was ever checking for one. */
+    if (videomaster_check_interrupt(avctx))
+    {
+        av_log(avctx, AV_LOG_DEBUG,
+               "Interrupted while waiting for a slot lock.\n");
+        return AVERROR_EXIT;
     }
 
     uint8_t *video_buf = NULL;
@@ -1550,6 +1623,44 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
 
     unlock_slot_dispatch(videomaster_context, slot);
     return 0;
+}
+
+int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
+{
+    struct VideoMasterData    *videomaster_data = NULL;
+    struct VideoMasterContext *videomaster_context = NULL;
+    int                        ret = read_packet_internal(avctx, pkt);
+    int64_t                    now;
+
+    if (ret != 0 && ret != AVERROR(EAGAIN))
+        return ret;
+    if (extract_context_or_log(avctx, &videomaster_data,
+                               &videomaster_context) != 0)
+        return ret;
+
+    now = av_gettime_relative();
+    if (ret == 0)
+    {
+        videomaster_context->last_data_time = now;
+        return 0;
+    }
+
+    /* Nothing received this time. fftools/ffmpeg_demux.c just retries on
+     * EAGAIN without ever checking whether ffmpeg is stopping, so a capture
+     * that never receives anything can't be ended by 'q' or a single
+     * Ctrl+C (the interrupt callback only trips on the second signal once
+     * transcoding has started) — no_data_timeout gives it a way to end on
+     * its own. */
+    if (videomaster_data->no_data_timeout > 0 &&
+        now - videomaster_context->last_data_time >=
+            videomaster_data->no_data_timeout)
+    {
+        av_log(avctx, AV_LOG_ERROR,
+               "No data received for %.1fs (no_data_timeout), stopping.\n",
+               (now - videomaster_context->last_data_time) / 1000000.0);
+        return AVERROR(ETIMEDOUT);
+    }
+    return ret;
 }
 
 static const AVOption options[] = {
@@ -2096,6 +2207,112 @@ static const AVOption options[] = {
       1,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
+    { "no_data_timeout",
+      "End the capture with an error once no packet was received for this "
+      "long (e.g. no signal, or an RX filter rejecting every sender). 0 "
+      "(default) waits forever. Without it, such a capture can't be stopped "
+      "with 'q' or a single Ctrl+C. Checked once per slot lock timeout "
+      "(10s), so the actual delay is rounded up to that.",
+      OFFSET(no_data_timeout),
+      AV_OPT_TYPE_DURATION,
+      { .i64 = 0 },
+      0,
+      INT64_MAX,
+      AV_OPT_FLAG_DECODING_PARAM,
+      NULL },
+    { "sources_loglevel",
+      "Log level applied while listing sources with -sources (e.g. `ffmpeg "
+      "-sources videomaster,sources_loglevel=trace`). -sources otherwise "
+      "forces the 'warning' level, whatever -loglevel says. Default (-1) "
+      "keeps that level.",
+      OFFSET(sources_loglevel),
+      AV_OPT_TYPE_INT64,
+      { .i64 = -1 },
+      AV_LOG_QUIET,
+      AV_LOG_TRACE,
+      AV_OPT_FLAG_DECODING_PARAM,
+      .unit = "sources_loglevel" },
+    { "quiet",
+      NULL,
+      0,
+      AV_OPT_TYPE_CONST,
+      { .i64 = AV_LOG_QUIET },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM,
+      .unit = "sources_loglevel" },
+    { "panic",
+      NULL,
+      0,
+      AV_OPT_TYPE_CONST,
+      { .i64 = AV_LOG_PANIC },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM,
+      .unit = "sources_loglevel" },
+    { "fatal",
+      NULL,
+      0,
+      AV_OPT_TYPE_CONST,
+      { .i64 = AV_LOG_FATAL },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM,
+      .unit = "sources_loglevel" },
+    { "error",
+      NULL,
+      0,
+      AV_OPT_TYPE_CONST,
+      { .i64 = AV_LOG_ERROR },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM,
+      .unit = "sources_loglevel" },
+    { "warning",
+      NULL,
+      0,
+      AV_OPT_TYPE_CONST,
+      { .i64 = AV_LOG_WARNING },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM,
+      .unit = "sources_loglevel" },
+    { "info",
+      NULL,
+      0,
+      AV_OPT_TYPE_CONST,
+      { .i64 = AV_LOG_INFO },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM,
+      .unit = "sources_loglevel" },
+    { "verbose",
+      NULL,
+      0,
+      AV_OPT_TYPE_CONST,
+      { .i64 = AV_LOG_VERBOSE },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM,
+      .unit = "sources_loglevel" },
+    { "debug",
+      NULL,
+      0,
+      AV_OPT_TYPE_CONST,
+      { .i64 = AV_LOG_DEBUG },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM,
+      .unit = "sources_loglevel" },
+    { "trace",
+      NULL,
+      0,
+      AV_OPT_TYPE_CONST,
+      { .i64 = AV_LOG_TRACE },
+      0,
+      0,
+      AV_OPT_FLAG_DECODING_PARAM,
+      .unit = "sources_loglevel" },
     { "ip_video_destination",
       "IPv4 destination address for main ST2110 video stream in explicit mode.",
       OFFSET(ip_video_destination),

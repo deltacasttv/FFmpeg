@@ -279,11 +279,24 @@ typedef struct VideoMasterContext
                                   ///< set via ip_audio_timestamp_source)
     bool dual_stream;  ///< true if the stream must be configured with 3G-B-DS
                        ///< interface
+    int64_t last_data_time;  ///< av_gettime_relative() of the last packet
+                             ///< returned (or of the stream start), for
+                             ///< no_data_timeout
 
     uint32_t api_version;       ///< API version
     uint32_t number_of_boards;  ///< number of boards detected
     uint32_t nb_rx_channels;    ///< number of RX channels
     uint32_t nb_tx_channels;    ///< number of TX channels
+
+    // loopback state saved by ff_videomaster_disable_loopback(), restored when
+    // the board handle is closed
+    VHD_CORE_BOARDPROPERTY
+    loopback_property;  ///< loopback property selected for the channel
+                        ///< (firmware > active > passive)
+    uint32_t loopback_original_state;  ///< loopback state read before it was
+                                       ///< disabled by this demuxer
+    bool     loopback_saved;  ///< true if loopback_original_state is valid and
+                              ///< must be restored on stream stop
 
     // video stream data
     bool has_video;  ///< true if the stream has video data
@@ -345,8 +358,9 @@ typedef struct VideoMasterContext
     VHD_ST2110_30_FORMAT      ip_audio_format;
     VHD_ST2110_30_PACKET_TIME ip_audio_packet_time;
     bool                      ip_audio_sdp_mode;
-    VHD_SDP_MEDIA ip_audio_sdp_media;  ///< parsed audio SDP entry (SSM source
-                                       ///< filter included)
+    VHD_SDP_MEDIA ip_audio_sdp_media[2];  ///< [0]=main stream, [1]=SPS stream
+                                          ///< (SSM source filter included)
+    ULONG         ip_audio_sdp_media_count;
     void         *ip_sync_handle;
     bool  ip_sync_mode;  ///< true when video+audio synced via StreamSyncHandle
     void *ip_audio_slot_handle;  ///< locked slot for audio-only / non-sync path
@@ -400,6 +414,14 @@ typedef struct VideoMasterContext
     uint64_t hw_ts_base_video;
     uint64_t hw_ts_base_audio;
 
+    /* System/osc timestamp normalization base, per essence. The clock type
+     * (osc/system) is a single board-wide property, but in IP non-sync mode
+     * video and audio are two independently opened/started SDK streams whose
+     * per-slot system time counters do not share a common start epoch — so
+     * this must be normalized per essence, same as hw_ts_base_* above. */
+    uint64_t system_ts_base_video;
+    uint64_t system_ts_base_audio;
+
     /* Non-sync IP audio capture thread + its packet queue (see
      * videomaster_ip.c). */
     bool                   ip_audio_thread_active;
@@ -433,6 +455,11 @@ typedef struct VideoMasterData
     int64_t buffer_packing;    ///< buffer packing format
     int64_t dual_stream;  ///< 0/1 if the stream must be configured with 3G-B-DS
                           ///< interface
+    int64_t sources_loglevel;  ///< log level applied while listing sources
+                               ///< (-sources), -1 to keep the caller's one
+    int64_t no_data_timeout;   ///< in microseconds; end the capture once
+                               ///< nothing was received for this long, 0 to
+                               ///< wait forever
 
     char   *ip_video_destination;
     int64_t ip_video_udp_port;
@@ -478,13 +505,33 @@ typedef struct VideoMasterData
  *
  * This function releases the handle to the VideoMaster board specified in the
  * provided VideoMaster context. It ensures proper cleanup of resources
- * associated with the board handle.
+ * associated with the board handle, including restoring the loopback state
+ * saved by ff_videomaster_disable_loopback() if any.
  *
  * @param videomaster_context The VideoMaster context to use.
  * @return 0 on success, or negative AVERROR code on failure:
  *         AVERROR(EIO) for I/O error
  */
 int ff_videomaster_close_board_handle(VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Disables the loopback on the current SDI/HDMI channel.
+ *
+ * Saves the current loopback state of the channel (board_handle and
+ * channel_index of the context), then disables the loopback if it was enabled
+ * and waits for the channel to lock (up to
+ * VIDEOMASTER_LOOPBACK_LOCK_TIMEOUT_MS), since the input signal only reaches
+ * the receiver once the loopback is released. Does nothing on IP channels or
+ * on channels without loopback. The saved state is restored when the board
+ * handle is closed (ff_videomaster_close_board_handle()), so a loopback that
+ * was disabled beforehand is never enabled.
+ *
+ * @param videomaster_context The VideoMaster context to use.
+ * @return 0 on success (a lock timeout is not an error), or negative AVERROR
+ *         code on failure:
+ *         AVERROR(EIO) for I/O error
+ */
+int ff_videomaster_disable_loopback(VideoMasterContext *videomaster_context);
 
 /**
  * @brief Closes the stream handle to the VideoMaster stream.

@@ -20,6 +20,13 @@
 #include <VideoMasterHD_String.h>
 #endif
 
+/** Maximum time to wait for the channel to lock once its loopback has been
+ * disabled, and the polling period used while waiting. */
+#define VIDEOMASTER_LOOPBACK_LOCK_TIMEOUT_MS 5000
+#define VIDEOMASTER_LOOPBACK_LOCK_POLL_MS    100
+
+#define VIDEOMASTER_LOCK_SLOT_TIMEOUT_MS 5000
+
 /** static tables */
 
 /**
@@ -135,10 +142,25 @@ static AVDeviceInfo *create_device_info(VideoMasterContext *videomaster_context,
                                         bool                is_video);
 
 /**
+ * @brief Select the loopback property to use for the channel
+ *
+ * Only one loopback mechanism is driven per channel, picked by priority:
+ * firmware loopback, then active loopback, then passive loopback (bypass
+ * relay), depending on the board capabilities and the channel index.
+ * @param videomaster_context  VideoMasterContext pointer to the
+ * VideoMasterContext
+ * @return VHD_CORE_BOARDPROPERTY  The selected loopback property, or
+ * NB_VHD_CORE_BOARDPROPERTIES if the channel has no loopback
+ */
+static VHD_CORE_BOARDPROPERTY
+select_loopback_property(VideoMasterContext *videomaster_context);
+
+/**
  * @brief Disable loopback on the channel
  *
- * This function disables the loopback on the channel
- * specified in the VideoMasterContext.
+ * This function saves the current loopback state of the channel specified in
+ * the VideoMasterContext, then disables the loopback if it was enabled. The
+ * saved state is restored by restore_loopback_on_channel().
  * @param videomaster_context  VideoMasterContext pointer to the
  * VideoMasterContext
  * @return int 0 on success, negative AVERROR code on failure
@@ -146,15 +168,16 @@ static AVDeviceInfo *create_device_info(VideoMasterContext *videomaster_context,
 static int disable_loopback_on_channel(VideoMasterContext *videomaster_context);
 
 /**
- * @brief Enable loopback on the channel
+ * @brief Restore loopback on the channel
  *
- * This function enables the loopback on the channel
- * specified in the VideoMasterContext.
+ * This function restores the loopback state saved by
+ * disable_loopback_on_channel(). It does nothing if no state was saved, so the
+ * loopback is never enabled if it was not enabled before being disabled here.
  * @param videomaster_context  VideoMasterContext pointer to the
  * VideoMasterContext
  * @return int 0 on success, negative AVERROR code on failure
  */
-static int enable_loopback_on_channel(VideoMasterContext *videomaster_context);
+static int restore_loopback_on_channel(VideoMasterContext *videomaster_context);
 
 /**
  * @brief    Formats the device description string.
@@ -534,95 +557,186 @@ static AVDeviceInfo *create_device_info(VideoMasterContext *videomaster_context,
     return device_info;
 }
 
+static VHD_CORE_BOARDPROPERTY
+select_loopback_property(VideoMasterContext *videomaster_context)
+{
+    uint32_t has_firmware_loopback = false;
+    uint32_t has_active_loopback = false;
+    uint32_t has_passive_loopback = false;
+    int      channel_index = videomaster_context->channel_index;
+
+    if (VHD_GetBoardCapability(videomaster_context->board_handle,
+                               VHD_CORE_BOARD_CAP_FIRMWARE_LOOPBACK,
+                               &has_firmware_loopback) != VHDERR_NOERROR)
+        has_firmware_loopback = false;
+    if (VHD_GetBoardCapability(videomaster_context->board_handle,
+                               VHD_CORE_BOARD_CAP_ACTIVE_LOOPBACK,
+                               &has_active_loopback) != VHDERR_NOERROR)
+        has_active_loopback = false;
+    if (VHD_GetBoardCapability(videomaster_context->board_handle,
+                               VHD_CORE_BOARD_CAP_PASSIVE_LOOPBACK,
+                               &has_passive_loopback) != VHDERR_NOERROR)
+        has_passive_loopback = false;
+
+    if (has_firmware_loopback &&
+        get_firmware_loopback_property(channel_index) !=
+            NB_VHD_CORE_BOARDPROPERTIES)
+        return get_firmware_loopback_property(channel_index);
+
+    if (has_active_loopback && get_active_loopback_property(channel_index) !=
+                                   NB_VHD_CORE_BOARDPROPERTIES)
+        return get_active_loopback_property(channel_index);
+
+    if (has_passive_loopback && get_passive_loopback_property(channel_index) !=
+                                    NB_VHD_CORE_BOARDPROPERTIES)
+        return get_passive_loopback_property(channel_index);
+
+    return NB_VHD_CORE_BOARDPROPERTIES;
+}
+
 static int disable_loopback_on_channel(VideoMasterContext *videomaster_context)
 {
-    uint32_t has_passive_loopback = false;
-    uint32_t has_active_loopback = false;
+    VHD_CORE_BOARDPROPERTY property;
+    uint32_t               state = false;
+    int                    av_error;
 
-    ff_videomaster_handle_vhd_status(
-        videomaster_context->avctx,
-        VHD_GetBoardCapability(videomaster_context->board_handle,
-                               VHD_CORE_BOARD_CAP_PASSIVE_LOOPBACK,
-                               &has_passive_loopback),
-        "", "");
-    ff_videomaster_handle_vhd_status(
-        videomaster_context->avctx,
-        VHD_GetBoardCapability(videomaster_context->board_handle,
-                               VHD_CORE_BOARD_CAP_ACTIVE_LOOPBACK,
-                               &has_active_loopback),
-        "", "");
+    /* Already saved by an earlier start not followed by a stop: the current
+     * board state is ours, so it must not overwrite the original one. */
+    if (videomaster_context->loopback_saved)
+        return 0;
 
-    if (has_active_loopback &&
-        get_active_loopback_property(videomaster_context->channel_index) !=
-            NB_VHD_CORE_BOARDPROPERTIES)
+    property = select_loopback_property(videomaster_context);
+    if (property == NB_VHD_CORE_BOARDPROPERTIES)
     {
-        ff_videomaster_handle_vhd_status(
-            videomaster_context->avctx,
-            VHD_SetBoardProperty(videomaster_context->board_handle,
-                                 get_active_loopback_property(
-                                     videomaster_context->channel_index),
-                                 false),
-            "", "");
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "No loopback available on channel %u\n",
+               videomaster_context->channel_index);
+        return 0;
     }
 
-    if (has_passive_loopback &&
-        get_passive_loopback_property(videomaster_context->channel_index) !=
-            NB_VHD_CORE_BOARDPROPERTIES)
+    av_error = ff_videomaster_handle_vhd_status(
+        videomaster_context->avctx,
+        VHD_GetBoardProperty(videomaster_context->board_handle, property,
+                             &state),
+        "Loopback state retrieved successfully",
+        "Failed to retrieve loopback state");
+    if (av_error != 0)
+        return av_error;
+
+    videomaster_context->loopback_property = property;
+    videomaster_context->loopback_original_state = state;
+    videomaster_context->loopback_saved = true;
+
+    if (!state)
     {
-        ff_videomaster_handle_vhd_status(
-            videomaster_context->avctx,
-            VHD_SetBoardProperty(videomaster_context->board_handle,
-                                 get_passive_loopback_property(
-                                     videomaster_context->channel_index),
-                                 false),
-            "", "");
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "Loopback already disabled on channel %u, left untouched\n",
+               videomaster_context->channel_index);
+        return 0;
     }
+
+    av_error = ff_videomaster_handle_vhd_status(
+        videomaster_context->avctx,
+        VHD_SetBoardProperty(videomaster_context->board_handle, property,
+                             false),
+        "Loopback disabled successfully", "Failed to disable loopback");
+    if (av_error != 0)
+        return av_error;
+
+    av_log(videomaster_context->avctx, AV_LOG_TRACE,
+           "Loopback disabled on channel %u (board property %d, original "
+           "state: %u)\n",
+           videomaster_context->channel_index, (int)property, state);
 
     return 0;
 }
 
-static int enable_loopback_on_channel(VideoMasterContext *videomaster_context)
+static int restore_loopback_on_channel(VideoMasterContext *videomaster_context)
 {
-    uint32_t has_passive_loopback = false;
-    uint32_t has_active_loopback = false;
+    uint32_t state = false;
+    int      av_error;
 
-    ff_videomaster_handle_vhd_status(
-        videomaster_context->avctx,
-        VHD_GetBoardCapability(videomaster_context->board_handle,
-                               VHD_CORE_BOARD_CAP_PASSIVE_LOOPBACK,
-                               &has_passive_loopback),
-        "", "");
-    ff_videomaster_handle_vhd_status(
-        videomaster_context->avctx,
-        VHD_GetBoardCapability(videomaster_context->board_handle,
-                               VHD_CORE_BOARD_CAP_ACTIVE_LOOPBACK,
-                               &has_active_loopback),
-        "", "");
+    if (!videomaster_context->loopback_saved)
+        return 0;
 
-    if (has_active_loopback &&
-        get_active_loopback_property(videomaster_context->channel_index) !=
-            NB_VHD_CORE_BOARDPROPERTIES)
+    videomaster_context->loopback_saved = false;
+
+    if (VHD_GetBoardProperty(videomaster_context->board_handle,
+                             videomaster_context->loopback_property,
+                             &state) == VHDERR_NOERROR &&
+        state == videomaster_context->loopback_original_state)
+        return 0;
+
+    av_error = ff_videomaster_handle_vhd_status(
+        videomaster_context->avctx,
+        VHD_SetBoardProperty(videomaster_context->board_handle,
+                             videomaster_context->loopback_property,
+                             videomaster_context->loopback_original_state),
+        "Loopback restored successfully", "Failed to restore loopback");
+    if (av_error != 0)
+        return av_error;
+
+    av_log(videomaster_context->avctx, AV_LOG_TRACE,
+           "Loopback restored to original state %u on channel %u\n",
+           videomaster_context->loopback_original_state,
+           videomaster_context->channel_index);
+
+    return 0;
+}
+
+int ff_videomaster_disable_loopback(VideoMasterContext *videomaster_context)
+{
+    enum AVVideoMasterChannelType channel_type;
+    int                           av_error;
+
+    channel_type = ff_videomaster_get_channel_type_from_index(
+        videomaster_context->avctx, videomaster_context->board_handle,
+        videomaster_context->channel_index);
+    if (channel_type != AV_VIDEOMASTER_CHANNEL_SDI &&
+        channel_type != AV_VIDEOMASTER_CHANNEL_ASISDI &&
+        channel_type != AV_VIDEOMASTER_CHANNEL_HDMI)
+        return 0;
+
+    av_error = disable_loopback_on_channel(videomaster_context);
+    if (av_error != 0)
+        return av_error;
+
+    /* The input signal only reaches the receiver once the loopback is
+     * released: give the channel some time to lock. Not needed if the
+     * loopback was already disabled. */
+    if (!videomaster_context->loopback_saved ||
+        !videomaster_context->loopback_original_state)
+        return 0;
+
+    for (int elapsed_ms = 0; elapsed_ms < VIDEOMASTER_LOOPBACK_LOCK_TIMEOUT_MS;
+         elapsed_ms += VIDEOMASTER_LOOPBACK_LOCK_POLL_MS)
     {
-        ff_videomaster_handle_vhd_status(
-            videomaster_context->avctx,
-            VHD_SetBoardProperty(videomaster_context->board_handle,
-                                 get_active_loopback_property(
-                                     videomaster_context->channel_index),
-                                 true),
-            "", "");
+        if (ff_videomaster_is_channel_locked(videomaster_context))
+        {
+            av_log(videomaster_context->avctx, AV_LOG_TRACE,
+                   "Channel %u locked %d ms after loopback was disabled\n",
+                   videomaster_context->channel_index, elapsed_ms);
+            return 0;
+        }
+        av_usleep(VIDEOMASTER_LOOPBACK_LOCK_POLL_MS * 1000);
     }
 
-    if (has_passive_loopback &&
-        get_passive_loopback_property(videomaster_context->channel_index) !=
-            NB_VHD_CORE_BOARDPROPERTIES)
     {
-        ff_videomaster_handle_vhd_status(
-            videomaster_context->avctx,
-            VHD_SetBoardProperty(videomaster_context->board_handle,
-                                 get_passive_loopback_property(
-                                     videomaster_context->channel_index),
-                                 true),
-            "", "");
+        uint32_t channel_status = 0;
+        uint32_t loopback_state = 0;
+        VHD_GetChannelProperty(videomaster_context->board_handle,
+                               VHD_RX_CHANNEL,
+                               videomaster_context->channel_index,
+                               VHD_CORE_CP_STATUS, &channel_status);
+        VHD_GetBoardProperty(videomaster_context->board_handle,
+                             videomaster_context->loopback_property,
+                             &loopback_state);
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "Channel %u still not locked %d ms after loopback was disabled "
+               "(channel status: 0x%08X, loopback state read back: %u)\n",
+               videomaster_context->channel_index,
+               VIDEOMASTER_LOOPBACK_LOCK_TIMEOUT_MS, channel_status,
+               loopback_state);
     }
 
     return 0;
@@ -675,11 +789,13 @@ static int setup_field_merge(VideoMasterContext *videomaster_context)
 
 static int setup_transfer_scheme(VideoMasterContext *videomaster_context)
 {
-    ff_videomaster_handle_vhd_status(
-        videomaster_context->avctx,
-        VHD_SetStreamProperty(videomaster_context->stream_handle,
-                              VHD_CORE_SP_TRANSFER_SCHEME, VHD_TRANSFER_SLAVED),
-        "", "");
+    if (videomaster_context->has_video)
+        ff_videomaster_handle_vhd_status(
+            videomaster_context->avctx,
+            VHD_SetStreamProperty(videomaster_context->stream_handle,
+                                  VHD_CORE_SP_TRANSFER_SCHEME,
+                                  VHD_TRANSFER_SLAVED),
+            "", "");
 
     /* A StreamSync requires every member stream to use this transfer
      * scheme, not just the main (video) one. */
@@ -1290,7 +1406,11 @@ static int release_audio_info(VideoMasterContext *videomaster_context,
 
 int ff_videomaster_close_board_handle(VideoMasterContext *videomaster_context)
 {
-    int return_code = ff_videomaster_handle_vhd_status(
+    int return_code;
+
+    restore_loopback_on_channel(videomaster_context);
+
+    return_code = ff_videomaster_handle_vhd_status(
         videomaster_context->avctx,
         VHD_CloseBoardHandle(videomaster_context->board_handle),
         "Board handle closed successfully", "Failed to close board handle");
@@ -1357,6 +1477,12 @@ int ff_videomaster_create_devices_infos_from_board_index(
          channel_index < videomaster_context->nb_rx_channels; channel_index++)
     {
         videomaster_context->channel_index = channel_index;
+
+        if (ff_videomaster_disable_loopback(videomaster_context) != 0)
+            av_log(videomaster_context->avctx, AV_LOG_WARNING,
+                   "Failed to disable loopback on channel %u of board %u\n",
+                   channel_index, board_index);
+
         if (ff_videomaster_is_channel_locked(videomaster_context))
         {
             av_log(videomaster_context->avctx, AV_LOG_TRACE,
@@ -1368,14 +1494,17 @@ int ff_videomaster_create_devices_infos_from_board_index(
             av_error = add_device_info_into_list(videomaster_context,
                                                  board_name, serial_number,
                                                  device_list);
-            if (av_error != 0)
-                break;
         }
         else
             av_log(videomaster_context->avctx, AV_LOG_TRACE,
                    "Channel %u is unlocked "
                    "on board %u\n",
                    channel_index, board_index);
+
+        restore_loopback_on_channel(videomaster_context);
+
+        if (av_error != 0)
+            break;
     }
     ff_videomaster_close_board_handle(videomaster_context);
     av_log(videomaster_context->avctx, AV_LOG_TRACE,
@@ -1661,11 +1790,10 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
                                  enum AVVideoMasterTimeStampType source,
                                  uint64_t                       *timestamp)
 {
-    int             av_error = 0;
-    uint32_t        clock_frequency = 0;
-    static uint64_t system_ts_base = 0;
-    VHD_TIMECODE    time_code;
-    float           total_frames = 0;
+    int          av_error = 0;
+    uint32_t     clock_frequency = 0;
+    VHD_TIMECODE time_code;
+    float        total_frames = 0;
     if (slot_handle == NULL)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
@@ -1803,6 +1931,13 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
     }
     else
     {
+        bool      is_audio_slot = videomaster_context->ip_audio_slot_handle !=
+                                      NULL &&
+                                  slot_handle ==
+                                      videomaster_context->ip_audio_slot_handle;
+        uint64_t *system_ts_base =
+            is_audio_slot ? &videomaster_context->system_ts_base_audio
+                          : &videomaster_context->system_ts_base_video;
 
         GET_AND_CHECK(ff_videomaster_handle_vhd_status,
                       videomaster_context->avctx, videomaster_context->avctx,
@@ -1812,16 +1947,20 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
                       "Failed to retrieve timestamp");
         /* Raw SDK timestamp next to a host clock, for pts/drift diagnostics. */
         av_log(videomaster_context->avctx, AV_LOG_DEBUG,
-               "Raw system timestamp: %llu us (host ref: %lld us)\n",
+               "Raw system timestamp (%s): %llu us (host ref: %lld us)\n",
+               is_audio_slot ? "audio" : "video",
                (unsigned long long)*timestamp,
                (long long)av_gettime_relative());
-        // Normalize system timestamp to start
-        // at zero
-        if (system_ts_base == 0)
-            system_ts_base = *timestamp;
-        *timestamp -= system_ts_base;
+        /* Normalize to start near 0 per essence: the clock type (osc/system)
+         * is board-wide, but in IP non-sync mode video and audio are two
+         * independently started SDK streams whose per-slot system time
+         * counters don't share a common epoch (see system_ts_base_* doc). */
+        if (*system_ts_base == 0)
+            *system_ts_base = *timestamp;
+        *timestamp -= *system_ts_base;
         av_log(videomaster_context->avctx, AV_LOG_DEBUG,
-               "System timestamp: %lli\n", *timestamp);
+               "System timestamp (%s): %lli\n",
+               is_audio_slot ? "audio" : "video", *timestamp);
     }
 
     return 0;
@@ -2178,8 +2317,6 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
         return av_error;
 
     /* 2. Common setup: applies to all technologies */
-    GET_AND_CHECK(disable_loopback_on_channel, videomaster_context->avctx,
-                  videomaster_context);
     GET_AND_CHECK(setup_field_merge, videomaster_context->avctx,
                   videomaster_context);
     GET_AND_CHECK(setup_transfer_scheme, videomaster_context->avctx,
@@ -2194,16 +2331,60 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
             return av_error;
     }
 
-    /* 3. Configure I/O timeout (not applicable for IP — network-level timeout)
-     */
+    /* 3. Configure I/O timeout. */
     if (videomaster_context->channel_type != AV_VIDEOMASTER_CHANNEL_IP_2110)
     {
         GET_AND_CHECK(ff_videomaster_handle_vhd_status,
                       videomaster_context->avctx, videomaster_context->avctx,
                       VHD_SetStreamProperty(videomaster_context->stream_handle,
-                                            VHD_CORE_SP_IO_TIMEOUT, 10000),
-                      "Stream time-out has been set to 10000ms",
+                                            VHD_CORE_SP_IO_TIMEOUT,
+                                            VIDEOMASTER_LOCK_SLOT_TIMEOUT_MS),
+                      "Stream time-out has been set to " AV_STRINGIFY(
+                          VIDEOMASTER_LOCK_SLOT_TIMEOUT_MS) "ms",
                       "Unable to set stream time-out");
+    }
+    else
+    {
+        if (videomaster_context->ip_sync_mode)
+        {
+            GET_AND_CHECK(
+                ff_videomaster_handle_vhd_status, videomaster_context->avctx,
+                videomaster_context->avctx,
+                VHD_SetStreamProperty(videomaster_context->ip_sync_handle,
+                                      VHD_CORE_SP_IO_TIMEOUT,
+                                      VIDEOMASTER_LOCK_SLOT_TIMEOUT_MS),
+                "Sync stream time-out has been set to " AV_STRINGIFY(
+                    VIDEOMASTER_LOCK_SLOT_TIMEOUT_MS) "ms",
+                "Unable to set sync stream time-out");
+        }
+        else
+        {
+            if (videomaster_context->has_video)
+            {
+                GET_AND_CHECK(
+                    ff_videomaster_handle_vhd_status,
+                    videomaster_context->avctx, videomaster_context->avctx,
+                    VHD_SetStreamProperty(videomaster_context->stream_handle,
+                                          VHD_CORE_SP_IO_TIMEOUT,
+                                          VIDEOMASTER_LOCK_SLOT_TIMEOUT_MS),
+                    "Video stream time-out has been set to " AV_STRINGIFY(
+                        VIDEOMASTER_LOCK_SLOT_TIMEOUT_MS) "ms",
+                    "Unable to set video stream time-out");
+            }
+            if (videomaster_context->has_audio)
+            {
+                GET_AND_CHECK(
+                    ff_videomaster_handle_vhd_status,
+                    videomaster_context->avctx, videomaster_context->avctx,
+                    VHD_SetStreamProperty(
+                        videomaster_context->ip_audio_stream_handle,
+                        VHD_CORE_SP_IO_TIMEOUT,
+                        VIDEOMASTER_LOCK_SLOT_TIMEOUT_MS),
+                    "Audio stream time-out has been set to " AV_STRINGIFY(
+                        VIDEOMASTER_LOCK_SLOT_TIMEOUT_MS) "ms",
+                    "Unable to set audio stream time-out");
+            }
+        }
     }
 
     /* 4. Configure timestamp source */
@@ -2262,7 +2443,6 @@ int ff_videomaster_stop_stream(VideoMasterContext *videomaster_context)
 {
     release_audio_info(videomaster_context,
                        &videomaster_context->audio_info.sdi.audio_info);
-    enable_loopback_on_channel(videomaster_context);
 
     if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_IP_2110)
     {
@@ -2283,6 +2463,19 @@ int ff_videomaster_stop_stream(VideoMasterContext *videomaster_context)
         if (!videomaster_context->ip_sync_mode &&
             videomaster_context->has_video && videomaster_context->has_audio)
         {
+            /* Must happen *before* VHD_StopStream() on the audio handle
+             * below, not after: this joins the IP audio capture thread,
+             * which only exits at a safe point where it isn't touching any
+             * locked slot's buffer (see ip_audio_capture_thread() in
+             * videomaster_ip.c). The audio stream is still running while
+             * this waits, so the thread keeps locking/processing slots
+             * normally and notices the stop request on its own within at
+             * most one more slot — no need for VHD_StopStream to unblock
+             * it. Calling VHD_StopStream first used to race with the
+             * thread still mid-iteration on a locked slot, causing an
+             * intermittent access-violation crash. */
+            ff_videomaster_stop_ip_audio_thread(videomaster_context);
+
             int audio_ret = ff_videomaster_handle_vhd_status(
                 videomaster_context->avctx,
                 VHD_StopStream(videomaster_context->ip_audio_stream_handle),
@@ -2290,12 +2483,6 @@ int ff_videomaster_stop_stream(VideoMasterContext *videomaster_context)
                 "Failed to stop audio stream");
             if (ret == 0)
                 ret = audio_ret;
-
-            /* Must happen after the audio stream is stopped above (so the
-             * thread's blocked slot lock unblocks with an error) and before
-             * ff_videomaster_close_streams_ip() below (which closes the
-             * handle the thread's last iteration may still be using). */
-            ff_videomaster_stop_ip_audio_thread(videomaster_context);
         }
 
         ff_videomaster_leave_multicast_group(videomaster_context);
