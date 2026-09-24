@@ -30,13 +30,19 @@
 #define AVDEVICE_VIDEOMASTER_COMMON_H
 
 #include "libavcodec/avcodec.h"
+#include "libavcodec/packet_internal.h"
 #include "libavdevice/avdevice.h"
 #include "libavutil/avutil.h"
+#include "libavutil/thread.h"
 
 #if defined(__APPLE__)
 #include <VideoMasterHD/VideoMasterHD_Core.h>
 #include <VideoMasterHD/VideoMasterHD_Dv.h>
 #include <VideoMasterHD/VideoMasterHD_Dv_Audio.h>
+#include <VideoMasterHD/VideoMasterHD_Ip_Board.h>
+#include <VideoMasterHD/VideoMasterHD_Ip_ST2110_20.h>
+#include <VideoMasterHD/VideoMasterHD_Ip_ST2110_Board.h>
+#include <VideoMasterHD/VideoMasterHD_SDP.h>
 #include <VideoMasterHD/VideoMasterHD_Sdi.h>
 #include <VideoMasterHD/VideoMasterHD_Sdi_Audio.h>
 #include <VideoMasterHD/VideoMasterHD_String.h>
@@ -44,6 +50,10 @@
 #include <VideoMasterHD_Core.h>
 #include <VideoMasterHD_Dv.h>
 #include <VideoMasterHD_Dv_Audio.h>
+#include <VideoMasterHD_Ip_Board.h>
+#include <VideoMasterHD_Ip_ST2110_20.h>
+#include <VideoMasterHD_Ip_ST2110_Board.h>
+#include <VideoMasterHD_SDP.h>
 #include <VideoMasterHD_Sdi.h>
 #include <VideoMasterHD_Sdi_Audio.h>
 #include <VideoMasterHD_String.h>
@@ -61,6 +71,7 @@ enum AVVideoMasterChannelType
     AV_VIDEOMASTER_CHANNEL_HDMI,
     AV_VIDEOMASTER_CHANNEL_ASISDI,
     AV_VIDEOMASTER_CHANNEL_SDI,
+    AV_VIDEOMASTER_CHANNEL_IP_2110,
     AV_VIDEOMASTER_CHANNEL_UNKNOWN
 };
 
@@ -105,6 +116,10 @@ enum AVVideoMasterTimeStampType
     AV_VIDEOMASTER_TIMESTAMP_HARDWARE,
     AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD,
     AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD,
+    AV_VIDEOMASTER_TIMESTAMP_RTP,  ///< IP (ST2110) only: per-slot RTP media
+                                   ///< clock timestamp
+    AV_VIDEOMASTER_TIMESTAMP_PTP,  ///< IP only: the board's absolute PTP
+                                   ///< time (live read, not per-slot)
     AV_VIDEOMASTER_TIMESTAMP_NB
 };
 
@@ -208,6 +223,27 @@ union VideoMasterAudioInfo
 };
 
 /**
+ * @brief Thread-safe FIFO of AVPackets.
+ *
+ * Used by the IP non-sync combined mode's dedicated audio capture thread
+ * (see videomaster_ip.c) to hand off audio AVPackets to read_packet(),
+ * decoupling the audio essence's real arrival rate from however often
+ * read_packet() is called for video. Bounded by max_q_size (bytes); packets
+ * are dropped (with a warning) rather than blocking the producer once full.
+ */
+typedef struct VideoMasterPacketQueue
+{
+    PacketList         pkt_list;
+    int                nb_packets;
+    unsigned long long size;
+    int                abort_request;
+    AVMutex            mutex;
+    AVCond             cond;
+    AVFormatContext   *avctx;
+    int64_t            max_q_size;
+} VideoMasterPacketQueue;
+
+/**
  * @brief Main operational context for the VideoMaster DELTACAST(c) device
  * integration.
  *
@@ -234,14 +270,33 @@ typedef struct VideoMasterContext
     enum AVVideoMasterChannelType
         channel_type;  ///< type of the channel (HDMI or SDI)
     enum AVVideoMasterTimeStampType
-         timestamp_source;  ///< source of the timestamp
+        timestamp_source;  ///< source of the timestamp (video essence, and
+                           ///< SDI/HDMI's single shared essence)
+    enum AVVideoMasterTimeStampType
+         audio_timestamp_source;  ///< source of the timestamp for the IP
+                                  ///< audio essence (resolved: falls back to
+                                  ///< timestamp_source when not explicitly
+                                  ///< set via ip_audio_timestamp_source)
     bool dual_stream;  ///< true if the stream must be configured with 3G-B-DS
                        ///< interface
+    int64_t last_data_time;  ///< av_gettime_relative() of the last packet
+                             ///< returned (or of the stream start), for
+                             ///< no_data_timeout
 
     uint32_t api_version;       ///< API version
     uint32_t number_of_boards;  ///< number of boards detected
     uint32_t nb_rx_channels;    ///< number of RX channels
     uint32_t nb_tx_channels;    ///< number of TX channels
+
+    // loopback state saved by ff_videomaster_disable_loopback(), restored when
+    // the board handle is closed
+    VHD_CORE_BOARDPROPERTY
+    loopback_property;  ///< loopback property selected for the channel
+                        ///< (firmware > active > passive)
+    uint32_t loopback_original_state;  ///< loopback state read before it was
+                                       ///< disabled by this demuxer
+    bool     loopback_saved;  ///< true if loopback_original_state is valid and
+                              ///< must be restored on stream stop
 
     // video stream data
     bool has_video;  ///< true if the stream has video data
@@ -253,19 +308,72 @@ typedef struct VideoMasterContext
     uint32_t video_height;  ///< height of the video stream
     uint32_t
         video_frame_rate_num;  ///< base for the frame rate of the video stream
-    uint32_t video_frame_rate_den;    ///< denominator for the frame rate of the
-                                      ///< video stream
-    bool           video_interlaced;  ///< interlaced mode of the video stream
-    enum AVCodecID video_codec;       ///< codec ID of the video stream
+    uint32_t video_frame_rate_den;   ///< denominator for the frame rate of the
+                                     ///< video stream
+    bool     video_interlaced;       ///< interlaced mode of the video stream
+    bool video_needs_field_reorder;  ///< frame buffer is top-half/bottom-half
+    enum AVCodecID video_codec;      ///< codec ID of the video stream
     enum AVPixelFormat
              video_pixel_format;  ///< pixel format of the video stream
     uint32_t video_bit_rate;      ///< bit rate of the video stream
     enum AVVideoMasterBufferPacking
         video_buffer_packing;  ///< buffer packing format
 
-    bool
-        return_video_next;  ///< true if the next video frame should be returned
-    float ltc_frame_rate;   ///< frame rate for LTC timestamp calculation
+    /* IP ST2110 explicit mode fields (video essence).
+     * Main port is always VHD_IP_BRD_ETHERNETPORT_ETH_0 for the main
+     * stream. SPS will use VHD_IP_BRD_ETHERNETPORT_ETH_1 when added.
+     */
+    uint32_t                     ip_video_destination;
+    uint32_t                     ip_video_sps_destination;
+    uint32_t                     ip_video_udp_port;
+    uint32_t                     ip_video_sps_udp_port;
+    uint32_t                     ip_video_source;
+    uint32_t                     ip_video_sps_source;
+    uint32_t                     ip_video_udp_port_src;
+    uint32_t                     ip_video_sps_udp_port_src;
+    uint32_t                     ip_video_payload_type;
+    uint32_t                     ip_video_sps_payload_type;
+    VHD_ST2110_20_VIDEO_STANDARD ip_video_standard;
+    VHD_ST2110_20_DEPTH          ip_video_depth;
+
+    /* SDP mode fields for the video essence. */
+    bool            ip_video_sdp_mode;
+    VHD_SDP_SESSION ip_video_sdp_session;
+    VHD_SDP_MEDIA   ip_video_sdp_media[2];  ///< [0]=main stream, [1]=SPS stream
+    ULONG           ip_video_sdp_media_count;
+
+    /* IP ST2110-30 audio essence fields. */
+    void                     *ip_audio_stream_handle;
+    uint32_t                  ip_audio_destination;
+    uint32_t                  ip_audio_udp_port;
+    uint32_t                  ip_audio_source;
+    uint32_t                  ip_audio_udp_port_src;
+    uint32_t                  ip_audio_payload_type;
+    uint32_t                  ip_audio_sps_destination;
+    uint32_t                  ip_audio_sps_udp_port;
+    uint32_t                  ip_audio_sps_source;
+    uint32_t                  ip_audio_sps_udp_port_src;
+    uint32_t                  ip_audio_sps_payload_type;
+    uint32_t                  ip_audio_channel_index;
+    VHD_ST2110_30_FORMAT      ip_audio_format;
+    VHD_ST2110_30_PACKET_TIME ip_audio_packet_time;
+    bool                      ip_audio_sdp_mode;
+    VHD_SDP_MEDIA ip_audio_sdp_media[2];  ///< [0]=main stream, [1]=SPS stream
+                                          ///< (SSM source filter included)
+    ULONG         ip_audio_sdp_media_count;
+    void         *ip_sync_handle;
+    bool  ip_sync_mode;  ///< true when video+audio synced via StreamSyncHandle
+    void *ip_audio_slot_handle;  ///< locked slot for audio-only / non-sync path
+
+    /* Multicast re-join after a signal loss, see ff_videomaster_ip_link_
+     * watch() in videomaster_ip.c. */
+    bool    ip_link_status_supported;  ///< board reports per-port link state
+    bool    ip_link_up[2];             ///< last seen state, [0]=ETH_0 [1]=ETH_1
+    int64_t ip_last_link_poll_time;    ///< av_gettime_relative()
+    int64_t ip_last_rejoin_time;       ///< av_gettime_relative()
+
+    AVPacket *pending_packet;  ///< audio packet buffered from the current slot
+    float     ltc_frame_rate;  ///< frame rate for LTC timestamp calculation
 
     // audio stream data
     bool           has_audio;    ///< true if the stream has audio data
@@ -294,6 +402,38 @@ typedef struct VideoMasterContext
     uint8_t *audio_buffer;           ///< buffer to store the audio data
     uint32_t audio_buffer_size;      ///< size of the audio buffer
     uint32_t audio_frames_received;  ///< number of audio frames received
+    uint32_t audio_slots_received;   ///< cumulative number of ST2110-30 audio
+                                     ///< slots received (IP audio-only path)
+    uint32_t audio_slots_dropped;    ///< cumulative number of ST2110-30 audio
+                                     ///< slots dropped (IP audio-only path)
+
+    /* RTP timestamp unwrap state (32-bit -> monotonic 64-bit), per essence:
+     * video and audio have independent RTP media clocks. */
+    bool     rtp_ts_initialized_video;
+    uint32_t rtp_ts_last_raw_video;
+    int64_t  rtp_ts_unwrapped_video;
+    bool     rtp_ts_initialized_audio;
+    uint32_t rtp_ts_last_raw_audio;
+    int64_t  rtp_ts_unwrapped_audio;
+
+    /* Hardware timestamp normalization base, per essence (independent
+     * hardware clocks, unlike the single board-wide osc/system clock). */
+    uint64_t hw_ts_base_video;
+    uint64_t hw_ts_base_audio;
+
+    /* System/osc timestamp normalization base, per essence. The clock type
+     * (osc/system) is a single board-wide property, but in IP non-sync mode
+     * video and audio are two independently opened/started SDK streams whose
+     * per-slot system time counters do not share a common start epoch — so
+     * this must be normalized per essence, same as hw_ts_base_* above. */
+    uint64_t system_ts_base_video;
+    uint64_t system_ts_base_audio;
+
+    /* Non-sync IP audio capture thread + its packet queue (see
+     * videomaster_ip.c). */
+    bool                   ip_audio_thread_active;
+    pthread_t              ip_audio_thread;
+    VideoMasterPacketQueue ip_audio_queue;
 
 } VideoMasterContext;
 
@@ -322,6 +462,49 @@ typedef struct VideoMasterData
     int64_t buffer_packing;    ///< buffer packing format
     int64_t dual_stream;  ///< 0/1 if the stream must be configured with 3G-B-DS
                           ///< interface
+    int64_t sources_loglevel;  ///< log level applied while listing sources
+                               ///< (-sources), -1 to keep the caller's one
+    int64_t no_data_timeout;   ///< in microseconds; end the capture once
+                               ///< nothing was received for this long, 0 to
+                               ///< wait forever
+
+    char   *ip_video_destination;
+    int64_t ip_video_udp_port;
+    char   *ip_video_sps_destination;
+    int64_t ip_video_sps_udp_port;
+    char   *ip_video_source;
+    char   *ip_video_sps_source;
+    int64_t ip_video_udp_port_src;
+    int64_t ip_video_sps_udp_port_src;
+    int64_t ip_video_payload_type;
+    int64_t ip_video_sps_payload_type;
+    int64_t ip_video_width;
+    int64_t ip_video_height;
+    int64_t ip_video_framerate_num;
+    int64_t ip_video_framerate_den;
+    int64_t ip_video_interlaced;
+    int64_t ip_video_bit_depth;
+    char   *ip_video_sdp_file;
+
+    /* Audio IP ST2110-30 options */
+    char   *ip_audio_destination;
+    int64_t ip_audio_udp_port;
+    char   *ip_audio_source;
+    int64_t ip_audio_udp_port_src;
+    int64_t ip_audio_payload_type;
+    char   *ip_audio_sps_destination;
+    int64_t ip_audio_sps_udp_port;
+    char   *ip_audio_sps_source;
+    int64_t ip_audio_sps_udp_port_src;
+    int64_t ip_audio_sps_payload_type;
+    char   *ip_audio_sdp_file;
+    int64_t ip_audio_nb_channels;
+    int64_t ip_audio_packet_time;
+    int64_t ip_audio_format;
+    int64_t ip_audio_timestamp_source;  ///< pts source for the IP audio
+                                        ///< essence; -1 (default) means
+                                        ///< "follow timestamp_source"
+    int64_t ip_sync;
 } VideoMasterData;
 
 /**
@@ -329,13 +512,33 @@ typedef struct VideoMasterData
  *
  * This function releases the handle to the VideoMaster board specified in the
  * provided VideoMaster context. It ensures proper cleanup of resources
- * associated with the board handle.
+ * associated with the board handle, including restoring the loopback state
+ * saved by ff_videomaster_disable_loopback() if any.
  *
  * @param videomaster_context The VideoMaster context to use.
  * @return 0 on success, or negative AVERROR code on failure:
  *         AVERROR(EIO) for I/O error
  */
 int ff_videomaster_close_board_handle(VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Disables the loopback on the current SDI/HDMI channel.
+ *
+ * Saves the current loopback state of the channel (board_handle and
+ * channel_index of the context), then disables the loopback if it was enabled
+ * and waits for the channel to lock (up to
+ * VIDEOMASTER_LOOPBACK_LOCK_TIMEOUT_MS), since the input signal only reaches
+ * the receiver once the loopback is released. Does nothing on IP channels or
+ * on channels without loopback. The saved state is restored when the board
+ * handle is closed (ff_videomaster_close_board_handle()), so a loopback that
+ * was disabled beforehand is never enabled.
+ *
+ * @param videomaster_context The VideoMaster context to use.
+ * @return 0 on success (a lock timeout is not an error), or negative AVERROR
+ *         code on failure:
+ *         AVERROR(EIO) for I/O error
+ */
+int ff_videomaster_disable_loopback(VideoMasterContext *videomaster_context);
 
 /**
  * @brief Closes the stream handle to the VideoMaster stream.
@@ -463,6 +666,69 @@ enum AVVideoMasterChannelType ff_videomaster_get_channel_type_from_index(
 int ff_videomaster_get_data(VideoMasterContext *videomaster_context);
 
 /**
+ * @brief Computes an AVPacket duration for a raw PCM audio buffer.
+ *
+ * @param buf_size Size of the audio buffer, in bytes.
+ * @param nb_channels Number of audio channels.
+ * @param sample_size Bits per sample.
+ * @param sample_rate Sample rate, in Hz.
+ * @return Duration in microseconds (at least 1).
+ */
+int64_t ff_videomaster_fill_audio_packet_duration(uint32_t buf_size,
+                                                  uint32_t nb_channels,
+                                                  uint32_t sample_size,
+                                                  uint32_t sample_rate);
+
+/**
+ * @brief Initializes a VideoMasterPacketQueue.
+ * @param avctx AVFormatContext used for logging.
+ * @param q Queue to initialize.
+ * @param max_q_size Maximum queue size, in bytes, before packets get dropped.
+ */
+void ff_videomaster_packet_queue_init(AVFormatContext        *avctx,
+                                      VideoMasterPacketQueue *q,
+                                      int64_t                 max_q_size);
+
+/**
+ * @brief Flushes and destroys a VideoMasterPacketQueue. Safe to call even if
+ * a producer might still (briefly) reference it — callers must have already
+ * stopped/joined the producer thread first.
+ */
+void ff_videomaster_packet_queue_end(VideoMasterPacketQueue *q);
+
+/**
+ * @brief Requests any blocked ff_videomaster_packet_queue_get() call to
+ * return, and marks the queue as aborted so producers can stop cleanly.
+ */
+void ff_videomaster_packet_queue_abort(VideoMasterPacketQueue *q);
+
+/**
+ * @brief Appends a packet to the queue, taking ownership of its reference.
+ * @return 0 on success; a negative value if the queue is full (the packet is
+ * unreferenced and a warning is logged) or on allocation failure.
+ */
+int ff_videomaster_packet_queue_put(VideoMasterPacketQueue *q, AVPacket *pkt);
+
+/**
+ * @brief Removes and returns the oldest packet in the queue.
+ * @param block If non-zero, wait until a packet is available or the queue is
+ * aborted; if zero, return AVERROR(EAGAIN) immediately when empty.
+ * @return 0 on success, AVERROR(EAGAIN) if empty and non-blocking (or
+ * aborted), negative AVERROR otherwise.
+ */
+int ff_videomaster_packet_queue_get(VideoMasterPacketQueue *q, AVPacket *pkt,
+                                    int block);
+
+/**
+ * @brief Rejects IP video parameters for non-IP channel types (SDI, HDMI).
+ *
+ * Returns AVERROR(EINVAL) if any ip_video_* option has been set. Phase 4 (bis)
+ * will extend this to cover audio IP parameters once Phase 3 introduces them.
+ */
+int ff_videomaster_reject_ip_params(VideoMasterData    *data,
+                                    VideoMasterContext *ctx);
+
+/**
  * @brief Retrieves the number of available RX channels for a specified board.
  *
  * This function queries the VideoMaster DELTACAST(c) device to determine the
@@ -495,6 +761,22 @@ int ff_videomaster_get_nb_rx_channels(VideoMasterContext *videomaster_context);
 int ff_videomaster_get_slots_counter(VideoMasterContext *videomaster_context);
 
 /**
+ * @brief Retrieves audio slot statistics from the VideoMaster device.
+ *
+ * Updates the videomaster_context with the number of ST2110-30 audio slots
+ * received (audio_slots_received) and dropped (audio_slots_dropped),
+ * cumulative since the audio stream was started, queried from the
+ * ip_audio_stream_handle stored in the videomaster_context structure.
+ *
+ * @param videomaster_context Pointer to the VideoMaster context to update with
+ * audio slot statistics
+ * @return 0 on success, or negative AVERROR code on failure:
+ *         AVERROR(EIO) for I/O error
+ */
+int ff_videomaster_get_audio_slots_counter(
+    VideoMasterContext *videomaster_context);
+
+/**
  * @brief Retrieves the number of available TX channels for a specified board.
  *
  * This function queries the VideoMaster DELTACAST(c) device to determine the
@@ -517,16 +799,25 @@ int ff_videomaster_get_nb_tx_channels(VideoMasterContext *videomaster_context);
  *
  * This function retrieves the current timestamp from the VideoMaster device
  * using the specified context. The timestamp is stored in the provided
- * timestamp
- * variable. The timestamp source is determined by the timestamp_source
- * field in the VideoMaster context.
+ * timestamp variable, in microseconds, relative to the first timestamp
+ * fetched for that slot/essence.
  *
  * @param videomaster_context The VideoMaster context to use.
+ * @param slot_handle Handle of the locked slot to read the timestamp from
+ * (the video slot, the audio-only slot, etc. — whichever slot was just
+ * locked by the caller).
+ * @param source Which timestamp source to use for this call (osc/system,
+ * hardware, LTC on-board/companion card, or RTP — IP only for RTP). Callers
+ * pass the source resolved for the essence being read (video's
+ * timestamp_source, or audio's audio_timestamp_source), since IP allows the
+ * two essences to use different sources.
  * @param timestamp Pointer to store the retrieved timestamp.
  * @return 0 on success, or negative AVERROR code on failure:
  */
 int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
-                                 uint64_t           *timestamp);
+                                 void               *slot_handle,
+                                 enum AVVideoMasterTimeStampType source,
+                                 uint64_t                       *timestamp);
 
 /**
  * @brief Retrieves video stream properties from a VideoMaster DELTACAST(c)
@@ -622,6 +913,24 @@ bool ff_videomaster_is_ltc_companion_card_supported(
  */
 bool ff_videomaster_is_ltc_on_board_timestamp_supported(
     VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Checks if the board supports Precision Time Protocol (PTP).
+ *
+ * @param videomaster_context The VideoMaster context to use.
+ * @return true if PTP is supported, false otherwise.
+ */
+bool ff_videomaster_is_ptp_supported(VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Checks if the board's PTP client is currently locked to a master
+ * clock.
+ *
+ * @param videomaster_context The VideoMaster context to use.
+ * @return true if PTP is locked, false otherwise (including on error, e.g.
+ * PTP not supported).
+ */
+bool ff_videomaster_is_ptp_locked(VideoMasterContext *videomaster_context);
 
 /**
  * @brief Opens a handle to the VideoMaster board.
