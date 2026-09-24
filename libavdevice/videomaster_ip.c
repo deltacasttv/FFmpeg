@@ -820,74 +820,6 @@ int ff_videomaster_join_multicast_group(VideoMasterContext *videomaster_context)
     return 0;
 }
 
-int ff_videomaster_leave_multicast_group(
-    VideoMasterContext *videomaster_context)
-{
-    int av_error = 0;
-
-    if (videomaster_context->ip_video_sdp_mode)
-    {
-        static const VHD_IP_BRD_ETHERNETPORT eth_ports[] = {
-            VHD_IP_BRD_ETHERNETPORT_ETH_0,
-            VHD_IP_BRD_ETHERNETPORT_ETH_1,
-        };
-
-        for (ULONG i = 0; i < videomaster_context->ip_video_sdp_media_count;
-             i++)
-        {
-            uint32_t addr = sdp_ip_to_uint32(
-                &videomaster_context->ip_video_sdp_media[i].DestinationIP);
-            if (!ip_is_multicast(addr))
-                continue;
-            GET_AND_CHECK(
-                ff_videomaster_handle_vhd_status, videomaster_context->avctx,
-                videomaster_context->avctx,
-                VHD_LeaveMulticastGroup(videomaster_context->board_handle,
-                                        eth_ports[i], addr),
-                "Left SDP multicast group",
-                "Failed to leave SDP multicast group");
-        }
-        return 0;
-    }
-
-    if (!ip_is_multicast(videomaster_context->ip_video_destination))
-    {
-        av_log(videomaster_context->avctx, AV_LOG_TRACE,
-               "Destination is unicast — no multicast leave needed.\n");
-        return 0;
-    }
-
-    av_log(videomaster_context->avctx, AV_LOG_TRACE,
-           "Destination is multicast — leaving group on main port (ETH_0).\n");
-
-    GET_AND_CHECK(
-        ff_videomaster_handle_vhd_status, videomaster_context->avctx,
-        videomaster_context->avctx,
-        VHD_LeaveMulticastGroup(videomaster_context->board_handle,
-                                VHD_IP_BRD_ETHERNETPORT_ETH_0,
-                                videomaster_context->ip_video_destination),
-        "Left multicast group on main port",
-        "Failed to leave multicast group on main port");
-
-    if (videomaster_context->ip_video_sps_destination != 0 &&
-        ip_is_multicast(videomaster_context->ip_video_sps_destination))
-    {
-        av_log(videomaster_context->avctx, AV_LOG_TRACE,
-               "SPS destination is multicast — leaving group on secondary port "
-               "(ETH_1).\n");
-        GET_AND_CHECK(ff_videomaster_handle_vhd_status,
-                      videomaster_context->avctx, videomaster_context->avctx,
-                      VHD_LeaveMulticastGroup(
-                          videomaster_context->board_handle,
-                          VHD_IP_BRD_ETHERNETPORT_ETH_1,
-                          videomaster_context->ip_video_sps_destination),
-                      "Left SPS multicast group on secondary port",
-                      "Failed to leave SPS multicast group on secondary port");
-    }
-
-    return 0;
-}
-
 #define IP_LINK_POLL_PERIOD_US 1000000
 #define IP_NO_DATA_REJOIN_US                                                   \
     1000000  ///< also the minimum period between rejoins
@@ -953,28 +885,58 @@ static int list_multicast_groups(VideoMasterContext *ctx,
     return n;
 }
 
+/* Video and audio may share a group, which must be joined or left once. */
+static bool is_listed_earlier(const MulticastGroupRef *groups, int i)
+{
+    for (int j = 0; j < i; j++)
+        if (groups[j].addr == groups[i].addr &&
+            groups[j].port == groups[i].port)
+            return true;
+    return false;
+}
+
+int ff_videomaster_leave_multicast_group(VideoMasterContext *ctx)
+{
+    MulticastGroupRef groups[4];
+    int               n = list_multicast_groups(ctx, groups);
+    int               ret = 0;
+
+    for (int i = 0; i < n; i++)
+    {
+        const MulticastGroupRef *g = &groups[i];
+        int                      err;
+
+        if (!ip_is_multicast(g->addr) || is_listed_earlier(groups, i))
+            continue;
+        av_log(ctx->avctx, AV_LOG_TRACE,
+               "Leaving multicast group %u.%u.%u.%u on ETH_%d.\n",
+               (g->addr >> 24) & 0xFF, (g->addr >> 16) & 0xFF,
+               (g->addr >> 8) & 0xFF, g->addr & 0xFF, g->port);
+        err = ff_videomaster_handle_vhd_status(
+            ctx->avctx,
+            VHD_LeaveMulticastGroup(ctx->board_handle, ip_eth_ports[g->port],
+                                    g->addr),
+            "Left multicast group", "Failed to leave multicast group");
+        if (ret == 0)
+            ret = err;
+    }
+    return ret;
+}
+
 /* Leave first: joining an already joined group succeeds without sending a
  * new IGMP report. Best effort, the capture goes on either way. */
 static void rejoin_port(VideoMasterContext *ctx, int port)
 {
     MulticastGroupRef groups[4];
-    uint32_t          done[4];
-    int               nb_done = 0;
     int               n = list_multicast_groups(ctx, groups);
 
     for (int i = 0; i < n; i++)
     {
         const MulticastGroupRef *g = &groups[i];
-        bool                     already = false;
 
-        if (g->port != port || !ip_is_multicast(g->addr))
+        if (g->port != port || !ip_is_multicast(g->addr) ||
+            is_listed_earlier(groups, i))
             continue;
-        /* video and audio may share a group */
-        for (int j = 0; j < nb_done; j++)
-            already |= done[j] == g->addr;
-        if (already)
-            continue;
-        done[nb_done++] = g->addr;
 
         av_log(ctx->avctx, AV_LOG_VERBOSE,
                "Re-joining multicast group %u.%u.%u.%u on ETH_%d.\n",
@@ -1979,29 +1941,6 @@ int ff_videomaster_close_streams_ip(VideoMasterContext *ctx)
                 "Audio stream handle closed",
                 "Failed to close audio stream handle");
         ctx->ip_audio_stream_handle = NULL;
-    }
-
-    /* Leave audio multicast groups */
-    if (ip_is_multicast(ctx->ip_audio_destination))
-    {
-        ff_videomaster_handle_vhd_status(
-            ctx->avctx,
-            VHD_LeaveMulticastGroup(ctx->board_handle,
-                                    VHD_IP_BRD_ETHERNETPORT_ETH_0,
-                                    ctx->ip_audio_destination),
-            "Left audio multicast group",
-            "Failed to leave audio multicast group");
-    }
-    if (ctx->ip_audio_sps_destination != 0 &&
-        ip_is_multicast(ctx->ip_audio_sps_destination))
-    {
-        ff_videomaster_handle_vhd_status(
-            ctx->avctx,
-            VHD_LeaveMulticastGroup(ctx->board_handle,
-                                    VHD_IP_BRD_ETHERNETPORT_ETH_1,
-                                    ctx->ip_audio_sps_destination),
-            "Left audio SPS multicast group",
-            "Failed to leave audio SPS multicast group");
     }
 
     return 0;

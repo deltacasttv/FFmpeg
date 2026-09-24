@@ -126,11 +126,8 @@ int ff_videomaster_join_multicast_group(
     VideoMasterContext *videomaster_context);
 
 /**
- * @brief Prepares the IP board for main stream reception.
- *
- * For IP ST2110 channels: leaves the multicast group on the main ethernet
- * port (port 0) if ip_video_destination is a multicast address.
- *
+ * @brief Leaves every multicast group joined at start-up (video and audio,
+ * main and SPS), once per group and port.
  *
  * @param videomaster_context The VideoMaster context to use.
  * @return 0 on success, or negative AVERROR code on failure.
