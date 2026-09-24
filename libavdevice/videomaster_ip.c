@@ -30,6 +30,7 @@
 #include "libavutil/file.h"
 #include "libavutil/log.h"
 #include "libavutil/mathematics.h"
+#include "libavutil/time.h"
 
 #if defined(__APPLE__)
 #include <VideoMasterHD/VideoMasterHD_Core.h>
@@ -887,6 +888,214 @@ int ff_videomaster_leave_multicast_group(
     return 0;
 }
 
+#define IP_LINK_POLL_PERIOD_US 1000000
+#define IP_NO_DATA_REJOIN_US   1000000  ///< also the minimum period between rejoins
+
+static const VHD_IP_BRD_ETHERNETPORT ip_eth_ports[2] = {
+    VHD_IP_BRD_ETHERNETPORT_ETH_0,
+    VHD_IP_BRD_ETHERNETPORT_ETH_1,
+};
+
+typedef struct MulticastGroupRef
+{
+    uint32_t             addr;
+    const VHD_SDP_MEDIA *sdp_media;  ///< NULL in explicit mode
+    int                  port;       ///< index into ip_eth_ports
+} MulticastGroupRef;
+
+/* The groups joined at start-up, with their port: must match
+ * ff_videomaster_join_multicast_group() and
+ * ff_videomaster_open_audio_stream_ip(). */
+static int list_multicast_groups(VideoMasterContext *ctx,
+                                 MulticastGroupRef   out[4])
+{
+    int n = 0;
+
+    if (ctx->has_video)
+    {
+        if (ctx->ip_video_sdp_mode)
+        {
+            for (ULONG i = 0; i < ctx->ip_video_sdp_media_count && i < 2; i++)
+                out[n++] = (MulticastGroupRef){
+                    sdp_ip_to_uint32(&ctx->ip_video_sdp_media[i].DestinationIP),
+                    &ctx->ip_video_sdp_media[i], (int)i
+                };
+        }
+        else
+        {
+            out[n++] = (MulticastGroupRef){ ctx->ip_video_destination, NULL, 0 };
+            if (ctx->ip_video_sps_destination != 0)
+                out[n++] = (MulticastGroupRef){ ctx->ip_video_sps_destination,
+                                                NULL, 1 };
+        }
+    }
+    if (ctx->has_audio)
+    {
+        if (ctx->ip_audio_sdp_mode)
+        {
+            for (ULONG i = 0; i < ctx->ip_audio_sdp_media_count && i < 2; i++)
+                out[n++] = (MulticastGroupRef){
+                    sdp_ip_to_uint32(&ctx->ip_audio_sdp_media[i].DestinationIP),
+                    &ctx->ip_audio_sdp_media[i], (int)i
+                };
+        }
+        else
+        {
+            out[n++] = (MulticastGroupRef){ ctx->ip_audio_destination, NULL, 0 };
+            if (ctx->ip_audio_sps_destination != 0)
+                out[n++] = (MulticastGroupRef){ ctx->ip_audio_sps_destination,
+                                                NULL, 1 };
+        }
+    }
+    return n;
+}
+
+/* Leave first: joining an already joined group succeeds without sending a
+ * new IGMP report. Best effort, the capture goes on either way. */
+static void rejoin_port(VideoMasterContext *ctx, int port)
+{
+    MulticastGroupRef groups[4];
+    uint32_t          done[4];
+    int               nb_done = 0;
+    int               n = list_multicast_groups(ctx, groups);
+
+    for (int i = 0; i < n; i++)
+    {
+        const MulticastGroupRef *g = &groups[i];
+        bool                     already = false;
+
+        if (g->port != port || !ip_is_multicast(g->addr))
+            continue;
+        /* video and audio may share a group */
+        for (int j = 0; j < nb_done; j++)
+            already |= done[j] == g->addr;
+        if (already)
+            continue;
+        done[nb_done++] = g->addr;
+
+        av_log(ctx->avctx, AV_LOG_VERBOSE,
+               "Re-joining multicast group %u.%u.%u.%u on ETH_%d.\n",
+               (g->addr >> 24) & 0xFF, (g->addr >> 16) & 0xFF,
+               (g->addr >> 8) & 0xFF, g->addr & 0xFF, port);
+        ff_videomaster_handle_vhd_status(
+            ctx->avctx,
+            VHD_LeaveMulticastGroup(ctx->board_handle, ip_eth_ports[port],
+                                    g->addr),
+            "", "");
+        if (g->sdp_media)
+            join_multicast_group_sdp_entry(ctx, g->sdp_media, ip_eth_ports[port]);
+        else
+            ff_videomaster_handle_vhd_status(
+                ctx->avctx,
+                VHD_JoinMulticastGroup(ctx->board_handle, ip_eth_ports[port],
+                                       g->addr),
+                "Re-joined multicast group",
+                "Failed to re-join multicast group");
+    }
+}
+
+static bool find_multicast_ports(VideoMasterContext *ctx, bool used[2])
+{
+    MulticastGroupRef groups[4];
+    int               n = list_multicast_groups(ctx, groups);
+
+    used[0] = used[1] = false;
+    for (int i = 0; i < n; i++)
+        if (ip_is_multicast(groups[i].addr))
+            used[groups[i].port] = true;
+    return used[0] || used[1];
+}
+
+void ff_videomaster_ip_link_watch_init(VideoMasterContext *ctx,
+                                       int64_t             no_data_timeout)
+{
+    ULONG   supported = 0;
+    int64_t now = av_gettime_relative();
+    bool    used[2];
+
+    ctx->ip_link_status_supported =
+        VHD_GetBoardCapability(ctx->board_handle, VHD_IP_BOARD_CAP_LINK_STATUS,
+                               &supported) == VHDERR_NOERROR &&
+        supported;
+    ctx->ip_link_up[0] = ctx->ip_link_up[1] = true;
+    ctx->ip_last_link_poll_time = now;
+    ctx->ip_last_rejoin_time = now;
+
+    if (!find_multicast_ports(ctx, used))
+        return;  /* unicast only: nothing will be re-joined */
+
+    if (no_data_timeout > 0 && no_data_timeout <= IP_NO_DATA_REJOIN_US)
+        av_log(ctx->avctx, AV_LOG_WARNING,
+               "no_data_timeout (%.1fs) ends the capture before re-joining the "
+               "multicast groups can take effect: a signal loss won't be "
+               "recovered.\n",
+               no_data_timeout / 1000000.0);
+    if (!ctx->ip_link_status_supported)
+        av_log(ctx->avctx, AV_LOG_VERBOSE,
+               "Board doesn't report link status: multicast groups will only "
+               "be re-joined after 1s without data.\n");
+}
+
+static void poll_link_status(VideoMasterContext *ctx, const bool used[2],
+                             bool up[2])
+{
+    for (int p = 0; p < 2; p++)
+    {
+        ULONG value = 0;
+        if (used[p] &&
+            VHD_GetEthernetPortProperty(ctx->board_handle, ip_eth_ports[p],
+                                        VHD_IP_BRD_EP_LINK_STATUS,
+                                        &value) == VHDERR_NOERROR)
+            up[p] = value != 0;
+    }
+}
+
+void ff_videomaster_ip_link_watch(VideoMasterContext *ctx, int64_t idle,
+                                  int64_t now)
+{
+    bool used[2];
+    bool up[2] = { ctx->ip_link_up[0], ctx->ip_link_up[1] };
+
+    if (!find_multicast_ports(ctx, used))
+        return;
+
+    if (ctx->ip_link_status_supported &&
+        now - ctx->ip_last_link_poll_time >= IP_LINK_POLL_PERIOD_US)
+    {
+        ctx->ip_last_link_poll_time = now;
+        poll_link_status(ctx, used, up);
+    }
+
+    for (int p = 0; p < 2; p++)
+    {
+        if (!used[p])
+            continue;
+        if (ctx->ip_link_up[p] && !up[p])
+            av_log(ctx->avctx, AV_LOG_WARNING, "Link down on ETH_%d.\n", p);
+        else if (!ctx->ip_link_up[p] && up[p])
+        {
+            av_log(ctx->avctx, AV_LOG_INFO,
+                   "Link up again on ETH_%d, re-joining its multicast "
+                   "group(s).\n",
+                   p);
+            rejoin_port(ctx, p);
+            ctx->ip_last_rejoin_time = now;
+        }
+        ctx->ip_link_up[p] = up[p];
+    }
+
+    if (idle >= IP_NO_DATA_REJOIN_US &&
+        now - ctx->ip_last_rejoin_time >= IP_NO_DATA_REJOIN_US)
+    {
+        av_log(ctx->avctx, AV_LOG_VERBOSE,
+               "No data for 1s, re-joining multicast group(s).\n");
+        for (int p = 0; p < 2; p++)
+            if (used[p] && ctx->ip_link_up[p])
+                rejoin_port(ctx, p);
+        ctx->ip_last_rejoin_time = now;
+    }
+}
+
 static int set_buffer_packing_and_codec(VideoMasterContext *ctx)
 {
     int av_error = 0;
@@ -1280,10 +1489,7 @@ int ff_videomaster_unlock_slot_ip(VideoMasterContext *ctx, void *slot)
 /* A few seconds' worth of typical ST2110-30 traffic. */
 #define VIDEOMASTER_IP_AUDIO_QUEUE_MAX_BYTES (4 * 1024 * 1024)
 
-/* True once ff_videomaster_stop_ip_audio_thread() has requested a stop
- * (reuses ctx->ip_audio_queue's own abort_request/mutex rather than adding
- * a second flag). Only safe to act on between iterations — see the two
- * call sites in ip_audio_capture_thread(), both while no slot is locked. */
+/* Set by ff_videomaster_stop_ip_audio_thread() through the queue's abort. */
 static int ip_audio_thread_stop_requested(VideoMasterContext *ctx)
 {
     int requested;
@@ -1293,14 +1499,10 @@ static int ip_audio_thread_stop_requested(VideoMasterContext *ctx)
     return requested;
 }
 
-/* Locks IP audio slots in a loop at its own pace, decoupled from however
- * often read_packet() is called for video, and pushes a timestamped
- * AVPacket per slot to ctx->ip_audio_queue. Exits either once
- * VHD_LockSlotHandle fails (stream stopped or a real error), or once a
- * stop is requested (see ip_audio_thread_stop_requested()) — checked only
- * right after unlocking a slot or on a lock timeout, i.e. only when this
- * thread isn't touching any slot buffer, so the caller can safely follow
- * up with VHD_StopStream() once this thread has been joined. */
+/* Locks IP audio slots at their own pace, decoupled from the video cadence of
+ * read_packet(), and pushes one timestamped packet per slot to
+ * ctx->ip_audio_queue. A stop request is only honored while no slot is
+ * locked, so the audio stream can be stopped safely once joined. */
 static void *ip_audio_capture_thread(void *arg)
 {
     VideoMasterContext *ctx = (VideoMasterContext *)arg;
@@ -1402,16 +1604,6 @@ void ff_videomaster_stop_ip_audio_thread(VideoMasterContext *ctx)
 {
     if (!ctx->ip_audio_thread_active)
         return;
-    /* Must be called *before* VHD_StopStream() on ip_audio_stream_handle,
-     * not after: the audio stream is still running at this point, so
-     * VHD_LockSlotHandle keeps succeeding normally and the thread notices
-     * the abort request at its own next safe point (see
-     * ip_audio_capture_thread() — right after unlocking a slot, or on a
-     * lock timeout, never while a slot is actually locked). Waiting for
-     * that here, before the stream is stopped, is what guarantees
-     * VHD_StopStream never runs concurrently with the thread still
-     * touching a locked slot's buffer (that race caused an intermittent
-     * crash — see the S6 loop investigation, 2026-09-22). */
     ff_videomaster_packet_queue_abort(&ctx->ip_audio_queue);
     pthread_join(ctx->ip_audio_thread, NULL);
     ff_videomaster_packet_queue_end(&ctx->ip_audio_queue);

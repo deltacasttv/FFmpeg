@@ -27,6 +27,10 @@
 
 #define VIDEOMASTER_LOCK_SLOT_TIMEOUT_MS 5000
 
+/* Short enough for ff_videomaster_ip_link_watch() to notice a signal loss
+ * within a second. */
+#define VIDEOMASTER_IP_LOCK_SLOT_TIMEOUT_MS 1000
+
 /** static tables */
 
 /**
@@ -2352,9 +2356,9 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
                 videomaster_context->avctx,
                 VHD_SetStreamProperty(videomaster_context->ip_sync_handle,
                                       VHD_CORE_SP_IO_TIMEOUT,
-                                      VIDEOMASTER_LOCK_SLOT_TIMEOUT_MS),
+                                      VIDEOMASTER_IP_LOCK_SLOT_TIMEOUT_MS),
                 "Sync stream time-out has been set to " AV_STRINGIFY(
-                    VIDEOMASTER_LOCK_SLOT_TIMEOUT_MS) "ms",
+                    VIDEOMASTER_IP_LOCK_SLOT_TIMEOUT_MS) "ms",
                 "Unable to set sync stream time-out");
         }
         else
@@ -2366,9 +2370,9 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
                     videomaster_context->avctx, videomaster_context->avctx,
                     VHD_SetStreamProperty(videomaster_context->stream_handle,
                                           VHD_CORE_SP_IO_TIMEOUT,
-                                          VIDEOMASTER_LOCK_SLOT_TIMEOUT_MS),
+                                          VIDEOMASTER_IP_LOCK_SLOT_TIMEOUT_MS),
                     "Video stream time-out has been set to " AV_STRINGIFY(
-                        VIDEOMASTER_LOCK_SLOT_TIMEOUT_MS) "ms",
+                        VIDEOMASTER_IP_LOCK_SLOT_TIMEOUT_MS) "ms",
                     "Unable to set video stream time-out");
             }
             if (videomaster_context->has_audio)
@@ -2379,9 +2383,9 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
                     VHD_SetStreamProperty(
                         videomaster_context->ip_audio_stream_handle,
                         VHD_CORE_SP_IO_TIMEOUT,
-                        VIDEOMASTER_LOCK_SLOT_TIMEOUT_MS),
+                        VIDEOMASTER_IP_LOCK_SLOT_TIMEOUT_MS),
                     "Audio stream time-out has been set to " AV_STRINGIFY(
-                        VIDEOMASTER_LOCK_SLOT_TIMEOUT_MS) "ms",
+                        VIDEOMASTER_IP_LOCK_SLOT_TIMEOUT_MS) "ms",
                     "Unable to set audio stream time-out");
             }
         }
@@ -2463,17 +2467,8 @@ int ff_videomaster_stop_stream(VideoMasterContext *videomaster_context)
         if (!videomaster_context->ip_sync_mode &&
             videomaster_context->has_video && videomaster_context->has_audio)
         {
-            /* Must happen *before* VHD_StopStream() on the audio handle
-             * below, not after: this joins the IP audio capture thread,
-             * which only exits at a safe point where it isn't touching any
-             * locked slot's buffer (see ip_audio_capture_thread() in
-             * videomaster_ip.c). The audio stream is still running while
-             * this waits, so the thread keeps locking/processing slots
-             * normally and notices the stop request on its own within at
-             * most one more slot — no need for VHD_StopStream to unblock
-             * it. Calling VHD_StopStream first used to race with the
-             * thread still mid-iteration on a locked slot, causing an
-             * intermittent access-violation crash. */
+            /* Before stopping the audio stream: the thread may still be
+             * reading a locked slot's buffer. */
             ff_videomaster_stop_ip_audio_thread(videomaster_context);
 
             int audio_ret = ff_videomaster_handle_vhd_status(

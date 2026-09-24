@@ -1385,14 +1385,14 @@ int ff_videomaster_read_header(AVFormatContext *avctx)
     }
 
     videomaster_context->last_data_time = av_gettime_relative();
+    if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_IP_2110)
+        ff_videomaster_ip_link_watch_init(videomaster_context,
+                                          videomaster_data->no_data_timeout);
 
     return 0;
 }
 
-/* Equivalent to libavformat's internal ff_check_interrupt(), reimplemented
- * locally rather than pulling in a libavformat-internal header from
- * libavdevice: AVIOInterruptCB is public API (avio.h), so this is just its
- * trivial dereference. */
+/* Local equivalent of libavformat's internal ff_check_interrupt(). */
 static int videomaster_check_interrupt(AVFormatContext *avctx)
 {
     AVIOInterruptCB *cb = &avctx->interrupt_callback;
@@ -1427,16 +1427,7 @@ static int read_packet_internal(AVFormatContext *avctx, AVPacket *pkt)
         return 0;
     }
 
-    /* Every other path above this point returns quickly (a pre-buffered
-     * packet, or a non-blocking queue drain); the slot lock below is the
-     * one call that can block for a while (up to the stream's I/O timeout,
-     * which for IP is left at the SDK's own default — see the "not
-     * applicable for IP" comment in setup_streams(), now suspect: this is
-     * exactly what made a zero-data capture — e.g. an RX source filter
-     * correctly rejecting a non-matching sender, see S19c — unresponsive
-     * to -t/Ctrl+C, since read_packet() returning AVERROR(EAGAIN) here
-     * repeatedly is what should let the caller notice a stop request
-     * between attempts, but nothing was ever checking for one. */
+    /* The slot lock below may block up to the stream's I/O timeout. */
     if (videomaster_check_interrupt(avctx))
     {
         av_log(avctx, AV_LOG_DEBUG,
@@ -1630,7 +1621,7 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
     struct VideoMasterData    *videomaster_data = NULL;
     struct VideoMasterContext *videomaster_context = NULL;
     int                        ret = read_packet_internal(avctx, pkt);
-    int64_t                    now;
+    int64_t                    now, idle;
 
     if (ret != 0 && ret != AVERROR(EAGAIN))
         return ret;
@@ -1640,24 +1631,20 @@ int ff_videomaster_read_packet(AVFormatContext *avctx, AVPacket *pkt)
 
     now = av_gettime_relative();
     if (ret == 0)
-    {
         videomaster_context->last_data_time = now;
-        return 0;
-    }
+    idle = now - videomaster_context->last_data_time;
 
-    /* Nothing received this time. fftools/ffmpeg_demux.c just retries on
-     * EAGAIN without ever checking whether ffmpeg is stopping, so a capture
-     * that never receives anything can't be ended by 'q' or a single
-     * Ctrl+C (the interrupt callback only trips on the second signal once
-     * transcoding has started) — no_data_timeout gives it a way to end on
-     * its own. */
-    if (videomaster_data->no_data_timeout > 0 &&
-        now - videomaster_context->last_data_time >=
-            videomaster_data->no_data_timeout)
+    if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_IP_2110)
+        ff_videomaster_ip_link_watch(videomaster_context, idle, now);
+
+    /* ffmpeg retries forever on EAGAIN, and neither 'q' nor a single Ctrl+C
+     * can stop a capture that receives nothing. */
+    if (ret == AVERROR(EAGAIN) && videomaster_data->no_data_timeout > 0 &&
+        idle >= videomaster_data->no_data_timeout)
     {
         av_log(avctx, AV_LOG_ERROR,
                "No data received for %.1fs (no_data_timeout), stopping.\n",
-               (now - videomaster_context->last_data_time) / 1000000.0);
+               idle / 1000000.0);
         return AVERROR(ETIMEDOUT);
     }
     return ret;
@@ -2208,11 +2195,8 @@ static const AVOption options[] = {
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM,
       NULL },
     { "no_data_timeout",
-      "End the capture with an error once no packet was received for this "
-      "long (e.g. no signal, or an RX filter rejecting every sender). 0 "
-      "(default) waits forever. Without it, such a capture can't be stopped "
-      "with 'q' or a single Ctrl+C. Checked once per slot lock timeout "
-      "(10s), so the actual delay is rounded up to that.",
+      "End the capture with an error once nothing was received for this "
+      "long. 0 (default) waits forever.",
       OFFSET(no_data_timeout),
       AV_OPT_TYPE_DURATION,
       { .i64 = 0 },

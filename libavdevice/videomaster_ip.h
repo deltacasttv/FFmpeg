@@ -139,6 +139,33 @@ int ff_videomaster_leave_multicast_group(
     VideoMasterContext *videomaster_context);
 
 /**
+ * @brief Initializes the state used by ff_videomaster_ip_link_watch(), once
+ * the stream(s) have started.
+ *
+ * Warns if no_data_timeout would end the capture before a re-join can help.
+ *
+ * @param ctx             The VideoMaster context to use.
+ * @param no_data_timeout The no_data_timeout option, in microseconds.
+ */
+void ff_videomaster_ip_link_watch_init(VideoMasterContext *ctx,
+                                       int64_t             no_data_timeout);
+
+/**
+ * @brief Re-joins a port's multicast groups when its link comes back up, or
+ * every port's after 1s without any data.
+ *
+ * The board doesn't re-send an IGMP join after a cable unplug, so the switch
+ * may take 40-80s to forward the stream again. IP channels only, from the
+ * read_packet thread.
+ *
+ * @param ctx  The VideoMaster context to use.
+ * @param idle Time since the last packet was received, in microseconds.
+ * @param now  Current av_gettime_relative().
+ */
+void ff_videomaster_ip_link_watch(VideoMasterContext *ctx, int64_t idle,
+                                  int64_t now);
+
+/**
  * @brief Configures all ST2110-20 stream properties on the video stream handle.
  *
  * Resolves the video standard (explicit mode only), then sets standard,
@@ -245,14 +272,8 @@ int ff_videomaster_start_ip_audio_thread(VideoMasterContext *ctx);
  * @brief Stops and joins the dedicated IP audio capture thread started by
  * ff_videomaster_start_ip_audio_thread(), and tears down ctx->ip_audio_queue.
  *
- * Must be called *before* the audio stream is stopped (VHD_StopStream on
- * ip_audio_stream_handle), not after: the audio stream is still running
- * while this waits, so the thread keeps locking/processing slots normally
- * and notices the stop request on its own at its next safe point (see
- * ip_audio_capture_thread() in videomaster_ip.c) — no need for
- * VHD_StopStream to unblock it. Calling VHD_StopStream first used to race
- * with the thread still mid-iteration on a locked slot, causing an
- * intermittent access-violation crash. A no-op if the thread was never
+ * Must be called before the audio stream is stopped: stopping it while the
+ * thread still reads a locked slot crashes. A no-op if the thread was never
  * started.
  *
  * @param ctx The VideoMaster context to use.

@@ -365,6 +365,13 @@ typedef struct VideoMasterContext
     bool  ip_sync_mode;  ///< true when video+audio synced via StreamSyncHandle
     void *ip_audio_slot_handle;  ///< locked slot for audio-only / non-sync path
 
+    /* Multicast re-join after a signal loss, see ff_videomaster_ip_link_
+     * watch() in videomaster_ip.c. */
+    bool    ip_link_status_supported;  ///< board reports per-port link state
+    bool    ip_link_up[2];             ///< last seen state, [0]=ETH_0 [1]=ETH_1
+    int64_t ip_last_link_poll_time;    ///< av_gettime_relative()
+    int64_t ip_last_rejoin_time;       ///< av_gettime_relative()
+
     AVPacket *pending_packet;  ///< audio packet buffered from the current slot
     float     ltc_frame_rate;  ///< frame rate for LTC timestamp calculation
 
