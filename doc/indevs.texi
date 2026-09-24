@@ -1496,7 +1496,7 @@ reception is available for both essences via the @code{ip_video_sps_*} /
 
 To enable this input device, you need to install the VideoMaster DELTACAST(c)
 SDK and you need to configure with appropriate @code{--extra-cflags} to target
-public include directories (or proper Frameworks path for MacOS) and @code{--extra-lfdflags} to target binary directories
+public include directories (or proper Frameworks path for MacOS) and @code{--extra-ldflags} to target binary directories
 of the SDK (or, again, proper Frameworks path for MacOS).
 
 DELTACAST(c) devices can automatically detect video settings (width, height, frame rate) and handle
@@ -1537,16 +1537,16 @@ Index of the stream to use. Only required when the ffmpeg input is set to dummy 
 Index of the board to use. Only required when the ffmpeg input is set to dummy (-i dummy). If the input is a source name (from `ffmpeg -sources videomaster`), the board index is automatically deduced from the source name. Must be a non negative integer. An error is displayed if the selected board does not exist or is not detected.
 
 @item timestamp_source
-Selects the source for video frame timestamps (and, for SDI/HDMI, the single shared audio+video essence). Options are: 'hw' for hardware-based timestamps (highest precision, if supported), 'osc' for the device's internal oscillator, 'system' for the system clock, 'ltc_on_board' to use an LTC signal sending to the board by the black burst connnector, 'ltc_companion_card' to use LTC signal sending through a TEB companion card, 'rtp' (IP only) to use the ST2110 essence's own RTP media clock, or 'ptp' (IP only) to use the board's absolute PTP time (requires the board to support PTP; a warning is displayed if PTP is not yet locked to a master clock). Without LTC signal, use 'hw' for best synchronization accuracy, 'osc' for stable internal timing, or 'system' for general-purpose timing. Default is 'osc'. An error is displayed if the selected timestamp_source is not supported. For IP devices, the audio essence can use a different source via @code{ip_audio_timestamp_source}.
+Selects the source for video frame timestamps (and, for SDI/HDMI, the single shared audio+video essence). Options are: 'hw' for hardware-based timestamps (highest precision, if supported), 'osc' for the device's internal oscillator, 'system' for the system clock, 'ltc_on_board' to use an LTC signal sent to the board through the black burst connector, 'ltc_companion_card' to use an LTC signal sent through a TEB companion card, 'rtp' (IP only) to use the ST2110 essence's own RTP media clock, or 'ptp' (IP only) to use the board's absolute PTP time (requires the board to support PTP; a warning is displayed if PTP is not yet locked to a master clock). Without LTC signal, use 'hw' for best synchronization accuracy, 'osc' for stable internal timing, or 'system' for general-purpose timing. Default is 'osc'. An error is displayed if the selected timestamp_source is not supported. For IP devices, the audio essence can use a different source via @code{ip_audio_timestamp_source}.
 
 @item nb_channels
 Set the number of audio channels to capture. This option is only used when the input source is an SDI stream. For HDMI streams, the number of channels is automatically detected from the stream properties. Supported values are 1 to 16. If not specified, the default is to use all available channels detected on the SDI stream.
 
 @item sample_size
-Set the audio sample size in bits to capture. This option is only used when the input source is an SDI stream. For HDMI streams, the sample size is automatically detected from the stream properties. Supported values are 16 and 24. If not specified, an error will be displayed.
+Set the audio sample size in bits to capture. This option is only used when the input source is an SDI stream. For HDMI streams, the sample size is automatically detected from the stream properties. Supported values are 16 and 24. If not specified, a warning is displayed and the sample size detected on the signal is used.
 
 @item sample_rate
-Set the audio sample rate in Hz to capture. This option is only used when the input source is an SDI stream. For HDMI streams, the sample rate is automatically detected from the stream properties. Supported values are 32000, 44100, and 48000. If not specified, an error will be displayed.
+Set the audio sample rate in Hz to capture. This option is only used when the input source is an SDI stream. For HDMI streams, the sample rate is automatically detected from the stream properties. Supported values are 32000, 44100, and 48000. If not specified, a warning is displayed and the sample rate detected on the signal is used.
 
 @item buffer_packing
 Specifies the buffer packing format and whether to enable the FPGA's color space converter on the board. If not set, the default buffer packing is YUV422 10-bit when the Line Padding property can be enabled, or YUV422 8-bit otherwise.
@@ -1555,7 +1555,7 @@ Specifies the buffer packing format and whether to enable the FPGA's color space
 Force the 3G-B dual stream interface when it cannot be auto-detected. A 3G Level B-DS stream received on the RX0 physical connector is split into two independent streams: one RX0 stream receives the A link and one RX1 stream receives the B link. When enabled, FFmpeg expects the two streams to be provided on consecutive channels (RX0 for the A link, RX1 for the B link). This option is only relevant for SDI 3G Level B-DS signals. An error is displayed if the selected board and channel do not support the 3G-B dual stream interface. Accepted values are @option{1} (or @option{true}) to enable dual stream mode, and @option{0} (or @option{false}) to disable it. Default is @option{false}.
 
 @item no_data_timeout
-End the capture with an error once no packet has been received for this long (for example: no signal on the input, or an IP source filter rejecting every sender). The value is a duration (e.g. @option{10} or @option{10s}). A capture that never receives anything can otherwise not be stopped with @key{q} or a single @key{Ctrl+C}, and @option{-t} has no effect on it since no timestamp ever advances. The check happens once per slot lock timeout (1 second on IP channels, 5 seconds on SDI/HDMI channels), so the actual delay is rounded up to that. Set it longer than the longest signal interruption the capture must survive: on IP channels receiving multicast, a value of 1 second or less ends the capture before re-joining the multicast groups (see below) can take effect, and a warning is logged at start-up. Default is @option{0}, which waits forever.
+End the capture with an error once no packet has been received for this long (for example: no signal on the input, or an IP source filter rejecting every sender). The value is a duration (e.g. @option{10} or @option{10s}). A capture that never receives anything can otherwise not be stopped with @key{q} or a single @key{Ctrl+C}, and @option{-t} has no effect on it since no timestamp ever advances. The check happens once per slot lock timeout (at most 1 second on IP channels, 5 seconds on SDI/HDMI channels), so the actual delay is rounded up to that. Set it longer than the longest signal interruption the capture must survive: on IP channels receiving multicast, a value of 1 second or less ends the capture before re-joining the multicast groups (see below) can take effect, and a warning is logged at start-up. Default is @option{0}, which waits forever.
 
 On IP channels, the demuxer also re-joins its multicast groups by itself when reception is lost: after 1 second without any data, and when a link that was down comes back up (if the board reports link status). The board doesn't do it on its own after a cable unplug, so without this the switch may take a long time (40 to 80 seconds observed) to forward the stream to that port again.
 
@@ -1698,8 +1698,9 @@ do.
 
 @item ip_sync
 Enable ST2110 stream synchronization between the video and audio essences
-(locks both essences on the same slot). Requires both a video and an audio
-stream to be configured. Accepted values are @option{1} (default) to enable,
+(locks both essences on the same slot). If a slot carries only one essence,
+it is delivered alone and the other one has a gap. Requires both a video and
+an audio stream to be configured. Accepted values are @option{1} (default) to enable,
 and @option{0} to acquire each essence independently, with no timing
 guarantee between them.
 
@@ -1743,23 +1744,23 @@ ffmpeg -f videomaster -board_index 0 -channel_index 0 -dual_stream 1 -i dummy -c
 Capture synchronized ST2110-20 video and ST2110-30 audio streams in explicit
 mode
 @example
-ffmpeg -f videomaster -i dummy -board_index 0 -channel_index 0 @@
-    -ip_video_destination 239.0.0.5 -ip_video_udp_port 50020 -ip_video_payload_type 96 @@
-    -ip_video_width 1920 -ip_video_height 1080 @@
-    -ip_video_framerate_num 25 -ip_video_framerate_den 1 @@
-    -ip_video_interlaced 0 -ip_video_bit_depth 10 @@
-    -ip_audio_destination 239.0.0.5 -ip_audio_udp_port 50030 -ip_audio_payload_type 97 @@
-    -ip_audio_nb_channels 2 -ip_audio_packet_time 1ms -ip_audio_format L24 @@
-    -ip_sync 1 @@
-    -c:v copy -c:a copy output.mov
+ffmpeg -f videomaster -board_index 0 -channel_index 0 \
+    -ip_video_destination 239.0.0.5 -ip_video_udp_port 50020 -ip_video_payload_type 96 \
+    -ip_video_width 1920 -ip_video_height 1080 \
+    -ip_video_framerate_num 25 -ip_video_framerate_den 1 \
+    -ip_video_interlaced 0 -ip_video_bit_depth 10 \
+    -ip_audio_destination 239.0.0.5 -ip_audio_udp_port 50030 -ip_audio_payload_type 97 \
+    -ip_audio_nb_channels 2 -ip_audio_packet_time 1ms -ip_audio_format L24 \
+    -ip_sync 1 \
+    -i dummy -c:v copy -c:a copy output.mov
 @end example
 
 @item
 Capture a ST2110-20 video stream from an SDP file (SDP mode)
 @example
-ffmpeg -f videomaster -i dummy -board_index 0 -channel_index 0 @@
-    -ip_video_sdp_file /path/to/stream.sdp @@
-    -c:v copy output.avi
+ffmpeg -f videomaster -board_index 0 -channel_index 0 \
+    -ip_video_sdp_file /path/to/stream.sdp \
+    -i dummy -c:v copy output.avi
 @end example
 
 @end itemize
