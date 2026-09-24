@@ -1546,10 +1546,16 @@ static int read_packet_internal(AVFormatContext *avctx, AVPacket *pkt)
         av_log(avctx, AV_LOG_TRACE,
                "Audio slot buffer: %u bytes -> duration %" PRId64 " us\n",
                audio_size, pkt->duration);
-        ff_videomaster_get_timestamp(
-            videomaster_context, videomaster_context->ip_audio_slot_handle,
-            videomaster_context->audio_timestamp_source,
-            &videomaster_context->pts);
+        if (videomaster_context->ip_sync_mode)
+            ff_videomaster_get_timestamp(videomaster_context,
+                                         videomaster_context->slot_handle,
+                                         videomaster_context->timestamp_source,
+                                         &videomaster_context->pts);
+        else
+            ff_videomaster_get_timestamp(
+                videomaster_context, videomaster_context->ip_audio_slot_handle,
+                videomaster_context->audio_timestamp_source,
+                &videomaster_context->pts);
         pkt->pts = videomaster_context->pts;
         pkt->dts = pkt->pts;
         if (ff_videomaster_get_audio_slots_counter(videomaster_context) != 0)

@@ -2347,47 +2347,34 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
                           VIDEOMASTER_LOCK_SLOT_TIMEOUT_MS) "ms",
                       "Unable to set stream time-out");
     }
-    else
+    /* The StreamSync lock sets its streams' timeout itself and is bounded
+     * by the resync window. */
+    else if (!videomaster_context->ip_sync_mode)
     {
-        if (videomaster_context->ip_sync_mode)
+        if (videomaster_context->has_video)
         {
             GET_AND_CHECK(
                 ff_videomaster_handle_vhd_status, videomaster_context->avctx,
                 videomaster_context->avctx,
-                VHD_SetStreamProperty(videomaster_context->ip_sync_handle,
+                VHD_SetStreamProperty(videomaster_context->stream_handle,
                                       VHD_CORE_SP_IO_TIMEOUT,
                                       VIDEOMASTER_IP_LOCK_SLOT_TIMEOUT_MS),
-                "Sync stream time-out has been set to " AV_STRINGIFY(
+                "Video stream time-out has been set to " AV_STRINGIFY(
                     VIDEOMASTER_IP_LOCK_SLOT_TIMEOUT_MS) "ms",
-                "Unable to set sync stream time-out");
+                "Unable to set video stream time-out");
         }
-        else
+        if (videomaster_context->has_audio)
         {
-            if (videomaster_context->has_video)
-            {
-                GET_AND_CHECK(
-                    ff_videomaster_handle_vhd_status,
-                    videomaster_context->avctx, videomaster_context->avctx,
-                    VHD_SetStreamProperty(videomaster_context->stream_handle,
-                                          VHD_CORE_SP_IO_TIMEOUT,
-                                          VIDEOMASTER_IP_LOCK_SLOT_TIMEOUT_MS),
-                    "Video stream time-out has been set to " AV_STRINGIFY(
-                        VIDEOMASTER_IP_LOCK_SLOT_TIMEOUT_MS) "ms",
-                    "Unable to set video stream time-out");
-            }
-            if (videomaster_context->has_audio)
-            {
-                GET_AND_CHECK(
-                    ff_videomaster_handle_vhd_status,
-                    videomaster_context->avctx, videomaster_context->avctx,
-                    VHD_SetStreamProperty(
-                        videomaster_context->ip_audio_stream_handle,
-                        VHD_CORE_SP_IO_TIMEOUT,
-                        VIDEOMASTER_IP_LOCK_SLOT_TIMEOUT_MS),
-                    "Audio stream time-out has been set to " AV_STRINGIFY(
-                        VIDEOMASTER_IP_LOCK_SLOT_TIMEOUT_MS) "ms",
-                    "Unable to set audio stream time-out");
-            }
+            GET_AND_CHECK(ff_videomaster_handle_vhd_status,
+                          videomaster_context->avctx,
+                          videomaster_context->avctx,
+                          VHD_SetStreamProperty(
+                              videomaster_context->ip_audio_stream_handle,
+                              VHD_CORE_SP_IO_TIMEOUT,
+                              VIDEOMASTER_IP_LOCK_SLOT_TIMEOUT_MS),
+                          "Audio stream time-out has been set to " AV_STRINGIFY(
+                              VIDEOMASTER_IP_LOCK_SLOT_TIMEOUT_MS) "ms",
+                          "Unable to set audio stream time-out");
         }
     }
 

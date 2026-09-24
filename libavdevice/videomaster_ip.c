@@ -889,7 +889,8 @@ int ff_videomaster_leave_multicast_group(
 }
 
 #define IP_LINK_POLL_PERIOD_US 1000000
-#define IP_NO_DATA_REJOIN_US   1000000  ///< also the minimum period between rejoins
+#define IP_NO_DATA_REJOIN_US                                                   \
+    1000000  ///< also the minimum period between rejoins
 
 static const VHD_IP_BRD_ETHERNETPORT ip_eth_ports[2] = {
     VHD_IP_BRD_ETHERNETPORT_ETH_0,
@@ -923,7 +924,8 @@ static int list_multicast_groups(VideoMasterContext *ctx,
         }
         else
         {
-            out[n++] = (MulticastGroupRef){ ctx->ip_video_destination, NULL, 0 };
+            out[n++] = (MulticastGroupRef){ ctx->ip_video_destination, NULL,
+                                            0 };
             if (ctx->ip_video_sps_destination != 0)
                 out[n++] = (MulticastGroupRef){ ctx->ip_video_sps_destination,
                                                 NULL, 1 };
@@ -941,7 +943,8 @@ static int list_multicast_groups(VideoMasterContext *ctx,
         }
         else
         {
-            out[n++] = (MulticastGroupRef){ ctx->ip_audio_destination, NULL, 0 };
+            out[n++] = (MulticastGroupRef){ ctx->ip_audio_destination, NULL,
+                                            0 };
             if (ctx->ip_audio_sps_destination != 0)
                 out[n++] = (MulticastGroupRef){ ctx->ip_audio_sps_destination,
                                                 NULL, 1 };
@@ -983,7 +986,8 @@ static void rejoin_port(VideoMasterContext *ctx, int port)
                                     g->addr),
             "", "");
         if (g->sdp_media)
-            join_multicast_group_sdp_entry(ctx, g->sdp_media, ip_eth_ports[port]);
+            join_multicast_group_sdp_entry(ctx, g->sdp_media,
+                                           ip_eth_ports[port]);
         else
             ff_videomaster_handle_vhd_status(
                 ctx->avctx,
@@ -1022,7 +1026,7 @@ void ff_videomaster_ip_link_watch_init(VideoMasterContext *ctx,
     ctx->ip_last_rejoin_time = now;
 
     if (!find_multicast_ports(ctx, used))
-        return;  /* unicast only: nothing will be re-joined */
+        return; /* unicast only: nothing will be re-joined */
 
     if (no_data_timeout > 0 && no_data_timeout <= IP_NO_DATA_REJOIN_US)
         av_log(ctx->avctx, AV_LOG_WARNING,
@@ -1389,6 +1393,63 @@ int ff_videomaster_start_stream_ip(VideoMasterContext *videomaster_context)
     return 0;
 }
 
+/* Returns the essence's sub-slot and buffer, or NULL when the sync slot
+ * has no data for it. */
+static void *get_sync_sub_slot(VideoMasterContext *ctx, void *sync_slot,
+                               HANDLE stream_handle, ULONG buffer_type,
+                               const char *essence, uint8_t **buf,
+                               uint32_t *size)
+{
+    void *sub_slot = NULL;
+    ULONG status = VHD_StreamSyncGetSlotHandle(sync_slot, stream_handle,
+                                               &sub_slot);
+
+    if (status == VHDERR_NOERROR)
+        status = VHD_GetSlotBuffer(sub_slot, buffer_type, (BYTE **)buf, size);
+    if (status != VHDERR_NOERROR)
+    {
+        av_log(ctx->avctx, AV_LOG_VERBOSE,
+               "No %s in this sync slot (VHDERR = %lu), skipping it.\n",
+               essence, (unsigned long)status);
+        *buf = NULL;
+        *size = 0;
+        return NULL;
+    }
+    return sub_slot;
+}
+
+static int lock_next_sync_slot_ip(VideoMasterContext *ctx, uint8_t **video_buf,
+                                  uint32_t *video_size, uint8_t **audio_buf,
+                                  uint32_t *audio_size, void **slot_to_unlock)
+{
+    int   av_error = 0;
+    void *sync_slot = NULL;
+    void *video_sub, *audio_sub;
+
+    GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
+                  VHD_LockSlotHandle(ctx->ip_sync_handle, &sync_slot),
+                  "Sync slot locked", "Failed to lock sync slot");
+
+    video_sub = get_sync_sub_slot(ctx, sync_slot, ctx->stream_handle,
+                                  VHD_ST2110_BT_VIDEO, "video", video_buf,
+                                  video_size);
+    audio_sub = get_sync_sub_slot(ctx, sync_slot, ctx->ip_audio_stream_handle,
+                                  VHD_ST2110_BT_AUDIO, "audio", audio_buf,
+                                  audio_size);
+    if (!video_sub && !audio_sub)
+    {
+        ff_videomaster_handle_vhd_status(ctx->avctx,
+                                         VHD_UnlockSlotHandle(sync_slot), "",
+                                         "Failed to unlock sync slot");
+        return AVERROR(EAGAIN);
+    }
+
+    /* Both essences share the video timeline in sync mode. */
+    ctx->slot_handle = video_sub ? video_sub : audio_sub;
+    *slot_to_unlock = sync_slot;
+    return 0;
+}
+
 int ff_videomaster_lock_next_slot_ip(VideoMasterContext *ctx,
                                      uint8_t **video_buf, uint32_t *video_size,
                                      uint8_t **audio_buf, uint32_t *audio_size,
@@ -1403,36 +1464,8 @@ int ff_videomaster_lock_next_slot_ip(VideoMasterContext *ctx,
     *slot_to_unlock = NULL;
 
     if (ctx->ip_sync_mode)
-    {
-        /* Lock the sync slot — it covers both essences */
-        void *sync_slot = NULL;
-        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
-                      VHD_LockSlotHandle(ctx->ip_sync_handle, &sync_slot),
-                      "Sync slot locked", "Failed to lock sync slot");
-
-        void *video_sub = NULL, *audio_sub = NULL;
-        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
-                      VHD_StreamSyncGetSlotHandle(sync_slot, ctx->stream_handle,
-                                                  &video_sub),
-                      "", "Failed to get video sub-slot");
-        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
-                      VHD_StreamSyncGetSlotHandle(sync_slot,
-                                                  ctx->ip_audio_stream_handle,
-                                                  &audio_sub),
-                      "", "Failed to get audio sub-slot");
-
-        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
-                      VHD_GetSlotBuffer(video_sub, VHD_ST2110_BT_VIDEO,
-                                        (BYTE **)video_buf, video_size),
-                      "", "Failed to get video buffer from sub-slot");
-        GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
-                      VHD_GetSlotBuffer(audio_sub, VHD_ST2110_BT_AUDIO,
-                                        (BYTE **)audio_buf, audio_size),
-                      "", "Failed to get audio buffer from sub-slot");
-
-        *slot_to_unlock = sync_slot;
-        return 0;
-    }
+        return lock_next_sync_slot_ip(ctx, video_buf, video_size, audio_buf,
+                                      audio_size, slot_to_unlock);
 
     if (ctx->has_video)
     {
@@ -1466,6 +1499,7 @@ int ff_videomaster_unlock_slot_ip(VideoMasterContext *ctx, void *slot)
     if (ctx->ip_sync_mode)
     {
         /* unlock the sync slot — frees both sub-slots */
+        ctx->slot_handle = NULL;
         return ff_videomaster_handle_vhd_status(ctx->avctx,
                                                 VHD_UnlockSlotHandle(slot), "",
                                                 "Failed to unlock sync slot");
