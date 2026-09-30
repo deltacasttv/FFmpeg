@@ -48,8 +48,9 @@ written in English, whatever the language used in conversation.
   SDP file. Source filtering: `ip_*_source` options, or `a=source-filter` in
   the SDP file.
 
-### IP synchronization (`ip_sync`, default 1)
+### IP synchronization (`ip_sync`, default auto)
 
+- `auto` enables sync only when both essences are configured.
 - `ip_sync 1` requires both essences. A StreamSync handle groups video (main)
   and audio (secondary); one lock returns both. A sync slot missing one
   essence delivers the other alone.
@@ -141,6 +142,13 @@ must fail cleanly (no crash or hang) with the expected error code and message.
 | S23b | `timestamp_source hw`, both essences | Clean capture |
 | S24 | `ffmpeg -sources videomaster` | All boards/channels listed, no SDK error |
 | S25 | `ffplay`, `ip_sync 0` | Picture and sound correct |
+| S26a | Explicit frame rate `30/1` | Clean capture at 30 fps |
+| S26b | Explicit frame rate `60/2` | Clean capture at 30 fps |
+| S26c | Explicit frame rate matching no standard (`31/1`) | `EINVAL`, "No ST2110-20 video standard matches" |
+| S27 | Generator on other standards (25p, 50p, 59.94p, 1080i), reduced and x1000 notations | Clean capture at the signal's format |
+| S28a | Video only, `ip_sync` unset | Clean capture, sync disabled |
+| S28b | Audio only, `ip_sync` unset | Clean capture, sync disabled |
+| S28c | Video + audio, `ip_sync` unset | Clean capture, sync enabled |
 
 ### SDI
 

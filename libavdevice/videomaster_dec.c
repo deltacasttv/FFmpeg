@@ -1044,12 +1044,12 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
                                 (has_audio_sdp &&
                                  videomaster_context->ip_audio_destination !=
                                      0);
-            if (videomaster_data->ip_sync != 0 && has_video_ip != has_audio_ip)
+            if (videomaster_data->ip_sync == 1 && has_video_ip != has_audio_ip)
             {
                 av_log(avctx, AV_LOG_ERROR,
                        "ip_sync requires both video and audio to be "
-                       "configured; use ip_sync 0 for single-essence "
-                       "capture.\n");
+                       "configured; leave ip_sync unset or use ip_sync 0 "
+                       "for single-essence capture.\n");
                 return AVERROR(EINVAL);
             }
 
@@ -2646,12 +2646,12 @@ static const AVOption options[] = {
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
       .unit = "timestamp_source" },
     { "ip_sync",
-      "Enable ST2110 stream synchronization (video+audio). Default on. "
-      "Disable for independent essence acquisition.",
+      "Synchronize the ST2110 video and audio essences. Default auto: "
+      "enabled when both essences are configured.",
       OFFSET(ip_sync),
       AV_OPT_TYPE_BOOL,
-      { .i64 = 1 },
-      0,
+      { .i64 = -1 },
+      -1,
       1,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM |
           AV_OPT_FLAG_AUDIO_PARAM,

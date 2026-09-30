@@ -504,7 +504,7 @@ typedef struct VideoMasterData
     int64_t ip_audio_timestamp_source;  ///< pts source for the IP audio
                                         ///< essence; -1 (default) means
                                         ///< "follow timestamp_source"
-    int64_t ip_sync;
+    int     ip_sync;                    ///< AV_OPT_TYPE_BOOL: -1 (auto), 0 or 1
 } VideoMasterData;
 
 /**
