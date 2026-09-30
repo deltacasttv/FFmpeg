@@ -30,6 +30,7 @@
 #include "libavutil/file.h"
 #include "libavutil/log.h"
 #include "libavutil/mathematics.h"
+#include "libavutil/rational.h"
 #include "libavutil/time.h"
 
 #if defined(__APPLE__)
@@ -196,8 +197,8 @@ static int validate_network_arguments(VideoMasterData    *videomaster_data,
  *
  * The match is done by calling VHD_ST2110_20_GetVideoCharacteristics for
  * every known standard and comparing with the user-supplied parameters.
- * The framerate comparison is intentionally integer (floor), which allows
- * a fractional 59.94 standard to match a "60000/1001" user specification.
+ * The framerate is compared as a rational: "25/1" and "25000/1000" match the
+ * same standard, and "30000/1001" matches the 29.97 one.
  *
  * @param videomaster_context Context carrying the explicit video
  * parameters.
@@ -227,15 +228,12 @@ static int get_st2110_video_standard_from_explicit(
             !!interlaced != videomaster_context->video_interlaced)
             continue;
 
-        if ((uint32_t)frame_rate * 1000 ==
-            videomaster_context->video_frame_rate_num)
+        if (av_cmp_q(av_make_q(videomaster_context->video_frame_rate_num,
+                               videomaster_context->video_frame_rate_den),
+                     av_make_q(frame_rate * 1000, is_1001 ? 1001 : 1000)) == 0)
         {
-            uint32_t expected_den = is_1001 ? 1001 : 1000;
-            if (videomaster_context->video_frame_rate_den == expected_den)
-            {
-                *video_standard = (VHD_ST2110_20_VIDEO_STANDARD)i;
-                return 0;
-            }
+            *video_standard = (VHD_ST2110_20_VIDEO_STANDARD)i;
+            return 0;
         }
     }
 
