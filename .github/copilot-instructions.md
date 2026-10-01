@@ -52,8 +52,10 @@ written in English, whatever the language used in conversation.
 
 - `auto` enables sync only when both essences are configured.
 - `ip_sync 1` requires both essences. A StreamSync handle groups video (main)
-  and audio (secondary); one lock returns both. A sync slot missing one
-  essence delivers the other alone.
+  and audio (secondary); one lock returns both. A sync slot always carries
+  the video slot; the audio is added when a matching audio slot arrives
+  within the resync window. Without audio, each lock waits for the whole
+  window, so most video slots are dropped. Without video, the lock times out.
 - The StreamSync lock sets its streams' I/O timeout itself and is bounded by
   the resync window: the sync handle rejects `VHD_SetStreamProperty`. Streams
   added to a StreamSync can't be stopped or closed directly.

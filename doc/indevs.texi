@@ -1698,8 +1698,9 @@ do.
 
 @item ip_sync
 Enable ST2110 stream synchronization between the video and audio essences
-(locks both essences on the same slot). If a slot carries only one essence,
-it is delivered alone and the other one has a gap. Accepted values:
+(locks both essences on the same slot). The video drives the synchronization:
+when no matching audio arrives within the resync window, the video is
+delivered alone and the audio has a gap. Accepted values:
 @table @option
 @item auto
 Enable synchronization when both a video and an audio stream are configured,

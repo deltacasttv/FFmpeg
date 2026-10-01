@@ -1479,8 +1479,11 @@ static int read_packet_internal(AVFormatContext *avctx, AVPacket *pkt)
         return AVERROR(EIO);
     }
 
+    bool has_video_pkt = videomaster_context->has_video && video_buf &&
+                         video_size > 0;
+
     /* Fill video packet (primary) */
-    if (videomaster_context->has_video && video_buf && video_size > 0)
+    if (has_video_pkt)
     {
         if (av_new_packet(pkt, video_size) < 0)
         {
@@ -1529,7 +1532,7 @@ static int read_packet_internal(AVFormatContext *avctx, AVPacket *pkt)
     else if (videomaster_context->has_audio && audio_buf && audio_size > 0 &&
              videomaster_context->audio_stream)
     {
-        /* audio-only path: fill pkt directly (no video stream present) */
+        /* No video in this slot: the audio goes out in pkt directly. */
         if (av_new_packet(pkt, audio_size) < 0)
         {
             av_log(avctx, AV_LOG_ERROR,
@@ -1574,11 +1577,9 @@ static int read_packet_internal(AVFormatContext *avctx, AVPacket *pkt)
                videomaster_context->audio_frames_received);
     }
 
-    /* Pre-buffer audio packet when both video and audio are present.
-     * Sync mode only in practice: non-sync mode never fills audio_buf here
-     * anymore (that essence is serviced by ip_audio_thread instead). */
-    if (videomaster_context->has_video && videomaster_context->has_audio &&
-        audio_buf && audio_size > 0 && videomaster_context->audio_stream)
+    /* Pre-buffer the audio behind the video packet of the same slot. */
+    if (has_video_pkt && videomaster_context->has_audio && audio_buf &&
+        audio_size > 0 && videomaster_context->audio_stream)
     {
         videomaster_context->pending_packet = av_packet_alloc();
         if (!videomaster_context->pending_packet ||
