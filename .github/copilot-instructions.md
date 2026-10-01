@@ -159,6 +159,8 @@ must fail cleanly (no crash or hang) with the expected error code and message.
 | T1 | Basic capture | Signal's resolution, frame rate and scan type; no drop |
 | T3 | Explicit `nb_channels`, `sample_rate`, `sample_size` | Each value applied |
 | T3b | `nb_channels 16` on a source embedding fewer channels | Clean capture, missing channels silent, no extraction error |
+| T3c | `nb_channels 17` | Fails at option parsing, "out of range" |
+| T3d | `sample_rate` and `sample_size` without `nb_channels` | Clean video capture, "Invalid audio properties", no audio stream |
 | T4 | `timestamp_source rtp` | `EINVAL`, "only available for IP channels" |
 | T5 | `dual_stream 1` on a 3G-B signal | Recognized as 3G-B dual link |
 | T6 | Non-default `buffer_packing` (e.g. `YUV422_8`) | Matching pixel format |

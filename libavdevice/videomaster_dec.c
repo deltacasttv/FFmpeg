@@ -1783,7 +1783,7 @@ static const AVOption options[] = {
       AV_OPT_TYPE_INT64,
       { .i64 = -1 },
       -1,
-      INT_MAX,
+      VIDEOMASTER_SDI_MAX_AUDIO_CHANNELS,
       AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM,
       NULL },
     {

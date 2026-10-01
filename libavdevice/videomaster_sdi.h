@@ -24,6 +24,8 @@
 
 #include "videomaster_common.h"
 
+#define VIDEOMASTER_SDI_MAX_AUDIO_CHANNELS (VHD_NBOFGROUP * VHD_NBOFCHNPERGROUP)
+
 /**
  * @brief Validates command-line arguments for SDI/ASI channels.
  *
@@ -105,7 +107,8 @@ int ff_videomaster_release_audio_info_sdi(
  * @param videomaster_context The VideoMaster context.
  * @return 0 on success, negative AVERROR code on failure.
  */
-int ff_videomaster_get_audio_buffer_sdi(VideoMasterContext *videomaster_context);
+int ff_videomaster_get_audio_buffer_sdi(
+    VideoMasterContext *videomaster_context);
 
 /**
  * @brief Returns SDI stream processing mode used when opening streams.
@@ -175,7 +178,7 @@ int ff_videomaster_start_stream_sdi(VideoMasterContext *videomaster_context);
 int ff_videomaster_lock_next_slot_sdi(VideoMasterContext *ctx,
                                       uint8_t **video_buf, uint32_t *video_size,
                                       uint8_t **audio_buf, uint32_t *audio_size,
-                                      void    **slot_to_unlock);
+                                      void **slot_to_unlock);
 
 /** @brief Unlocks the slot obtained from ff_videomaster_lock_next_slot_sdi. */
 int ff_videomaster_unlock_slot_sdi(VideoMasterContext *ctx, void *slot);

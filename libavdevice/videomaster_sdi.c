@@ -116,7 +116,8 @@ int ff_videomaster_validate_arguments_sdi(
     }
 
     /* IP arguments must not be specified for SDI */
-    if (ff_videomaster_reject_ip_params(videomaster_data, videomaster_context) != 0)
+    if (ff_videomaster_reject_ip_params(videomaster_data,
+                                        videomaster_context) != 0)
         return AVERROR(EINVAL);
 
     return 0;
@@ -212,7 +213,9 @@ int ff_videomaster_check_channel_integrity_sdi(
                 AV_VIDEOMASTER_SAMPLE_SIZE_UNKNOWN &&
             videomaster_context->audio_sample_rate !=
                 AV_VIDEOMASTER_SAMPLE_RATE_UNKNOWN &&
-            videomaster_context->audio_nb_channels != 0)
+            videomaster_context->audio_nb_channels >= 1 &&
+            videomaster_context->audio_nb_channels <=
+                VIDEOMASTER_SDI_MAX_AUDIO_CHANNELS)
         {
             videomaster_context->has_audio = true;
             av_log(videomaster_context->avctx, AV_LOG_TRACE,
@@ -464,8 +467,8 @@ static int interleaved_audio_info_to_audio_buffer_sdi(
     return 0;
 }
 
-static void restore_audio_buffer_capacity_sdi(
-    VideoMasterContext *videomaster_context)
+static void
+restore_audio_buffer_capacity_sdi(VideoMasterContext *videomaster_context)
 {
     VHD_AUDIOINFO *audio_info = &videomaster_context->audio_info.sdi.audio_info;
 
@@ -490,7 +493,8 @@ int ff_videomaster_get_audio_buffer_sdi(VideoMasterContext *videomaster_context)
     if (status != VHDERR_NOERROR)
     {
         /* Losing one frame of audio must not stop the video. */
-        bool *logged = &videomaster_context->audio_info.sdi.extract_error_logged;
+        bool *logged =
+            &videomaster_context->audio_info.sdi.extract_error_logged;
         av_log(videomaster_context->avctx,
                *logged ? AV_LOG_DEBUG : AV_LOG_WARNING,
                "Failed to extract SDI audio (%s), frame delivered without "
@@ -815,15 +819,15 @@ int ff_videomaster_start_stream_sdi(VideoMasterContext *videomaster_context)
 int ff_videomaster_lock_next_slot_sdi(VideoMasterContext *ctx,
                                       uint8_t **video_buf, uint32_t *video_size,
                                       uint8_t **audio_buf, uint32_t *audio_size,
-                                      void    **slot_to_unlock)
+                                      void **slot_to_unlock)
 {
     int ret = ff_videomaster_get_data(ctx);
     if (ret != 0)
         return ret;
-    *video_buf      = ctx->video_buffer;
-    *video_size     = ctx->video_buffer_size;
-    *audio_buf      = ctx->audio_buffer;
-    *audio_size     = ctx->audio_buffer_size;
+    *video_buf = ctx->video_buffer;
+    *video_size = ctx->video_buffer_size;
+    *audio_buf = ctx->audio_buffer;
+    *audio_size = ctx->audio_buffer_size;
     *slot_to_unlock = ctx->slot_handle;
     return 0;
 }
