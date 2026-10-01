@@ -1726,13 +1726,14 @@ int ff_videomaster_get_data(VideoMasterContext *videomaster_context)
     else if (lock_slot_status != 0)
         return AVERROR(EIO);
 
-    if (videomaster_context->has_video &&
-        get_video_buffer(videomaster_context) != 0)
+    if ((videomaster_context->has_video &&
+         get_video_buffer(videomaster_context) != 0) ||
+        (videomaster_context->has_audio &&
+         get_audio_buffer(videomaster_context) != 0))
+    {
+        ff_videomaster_release_data(videomaster_context);
         return AVERROR(EIO);
-
-    if (videomaster_context->has_audio &&
-        get_audio_buffer(videomaster_context) != 0)
-        return AVERROR(EIO);
+    }
 
     av_log(videomaster_context->avctx, AV_LOG_TRACE,
            "ff_videomaster_get_data: OUT\n");

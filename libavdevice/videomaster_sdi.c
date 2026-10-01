@@ -320,6 +320,9 @@ int ff_videomaster_sdi_init_audio_info(VideoMasterContext *videomaster_context,
                            channel_idx, audio_group_idx);
                     return AVERROR(ENOMEM);
                 }
+                videomaster_context->audio_info.sdi
+                    .buffer_capacity[audio_group_idx][channel_idx] =
+                    audio_channel->DataSize;
             }
         }
     }
@@ -461,16 +464,42 @@ static int interleaved_audio_info_to_audio_buffer_sdi(
     return 0;
 }
 
-int ff_videomaster_get_audio_buffer_sdi(VideoMasterContext *videomaster_context)
+static void restore_audio_buffer_capacity_sdi(
+    VideoMasterContext *videomaster_context)
 {
     VHD_AUDIOINFO *audio_info = &videomaster_context->audio_info.sdi.audio_info;
 
-    if (ff_videomaster_handle_vhd_status(
-            videomaster_context->avctx,
-            VHD_SlotExtractAudio(videomaster_context->slot_handle, audio_info),
-            "Audio slot buffer retrieved successfully",
-            "Failed to retrieve audio slot buffer") != 0)
-        return AVERROR(EIO);
+    for (int group = 0; group < VHD_NBOFGROUP; group++)
+        for (int channel = 0; channel < VHD_NBOFCHNPERGROUP; channel++)
+        {
+            VHD_AUDIOCHANNEL *audio_channel =
+                &audio_info->pAudioGroups[group].pAudioChannels[channel];
+            if (audio_channel->pData)
+                audio_channel->DataSize = videomaster_context->audio_info.sdi
+                                              .buffer_capacity[group][channel];
+        }
+}
+
+int ff_videomaster_get_audio_buffer_sdi(VideoMasterContext *videomaster_context)
+{
+    VHD_AUDIOINFO *audio_info = &videomaster_context->audio_info.sdi.audio_info;
+    ULONG          status;
+
+    restore_audio_buffer_capacity_sdi(videomaster_context);
+    status = VHD_SlotExtractAudio(videomaster_context->slot_handle, audio_info);
+    if (status != VHDERR_NOERROR)
+    {
+        /* Losing one frame of audio must not stop the video. */
+        bool *logged = &videomaster_context->audio_info.sdi.extract_error_logged;
+        av_log(videomaster_context->avctx,
+               *logged ? AV_LOG_DEBUG : AV_LOG_WARNING,
+               "Failed to extract SDI audio (%s), frame delivered without "
+               "audio.\n",
+               VHD_ERRORCODE_ToPrettyString((VHD_ERRORCODE)status));
+        *logged = true;
+        videomaster_context->audio_buffer_size = 0;
+        return 0;
+    }
 
     return interleaved_audio_info_to_audio_buffer_sdi(
         videomaster_context, audio_info, &videomaster_context->audio_buffer,

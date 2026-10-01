@@ -219,6 +219,10 @@ union VideoMasterAudioInfo
     {
 
         VHD_AUDIOINFO audio_info;  ///< audio information for the audio stream
+        /// Allocated size of each pData. The extraction overwrites DataSize
+        /// with the received size, so it must be restored before each call.
+        uint32_t buffer_capacity[VHD_NBOFGROUP][VHD_NBOFCHNPERGROUP];
+        bool     extract_error_logged;  ///< first extraction error reported
     } sdi;
 };
 

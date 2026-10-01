@@ -158,11 +158,13 @@ must fail cleanly (no crash or hang) with the expected error code and message.
 |---|---|---|
 | T1 | Basic capture | Signal's resolution, frame rate and scan type; no drop |
 | T3 | Explicit `nb_channels`, `sample_rate`, `sample_size` | Each value applied |
+| T3b | `nb_channels 16` on a source embedding fewer channels | Clean capture, missing channels silent, no extraction error |
 | T4 | `timestamp_source rtp` | `EINVAL`, "only available for IP channels" |
 | T5 | `dual_stream 1` on a 3G-B signal | Recognized as 3G-B dual link |
 | T6 | Non-default `buffer_packing` (e.g. `YUV422_8`) | Matching pixel format |
 | T7 | Interlaced signal | Correct field order |
 | T8 | `ffplay` | Picture matches the signal |
+| T10 | Fractional frame rate (29.97, 59.94) with embedded audio | Clean capture, no extraction error, no click or repeated audio |
 
 ### HDMI
 
