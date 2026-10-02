@@ -95,6 +95,25 @@ static int check_header_arguments(VideoMasterData    *videomaster_data,
 static int check_timestamp_source(VideoMasterContext *videomaster_context);
 
 /**
+ * @brief Tells whether a timestamp source is an LTC one.
+ * @param source Timestamp source
+ * @return bool true for ltc_on_board and ltc_companion_card
+ */
+static bool is_ltc_source(enum AVVideoMasterTimeStampType source);
+
+/**
+ * @brief Reads the frame rate of an LTC source and stores it in
+ * ltc_frame_rate, for the LTC timestamp computation. Warns when the LTC
+ * source is not locked, or when its frame rate differs from the video one.
+ * @param videomaster_context VideoMasterContext pointer to the VideoMaster
+ * context
+ * @param source LTC timestamp source (ltc_on_board or ltc_companion_card)
+ * @return int 0 on success, AVERROR(EIO) if the timecode can't be read
+ */
+static int init_ltc_frame_rate(VideoMasterContext *videomaster_context,
+                               enum AVVideoMasterTimeStampType source);
+
+/**
  * @brief   Extracts the VideoMaster context from the AVFormatContext or logs an
  * error if it fails.
  *
@@ -538,14 +557,10 @@ static int check_one_timestamp_source(VideoMasterContext *videomaster_context,
 
 static int check_timestamp_source(VideoMasterContext *videomaster_context)
 {
-    VHD_TIMECODE  time_code;
-    BOOL32        ltc_source_is_locked;
-    float         ltc_source_frame_rate;
-    VHD_ERRORCODE error_code;
-    int           status;
-    bool          audio_source_applies = videomaster_context->channel_type ==
-                                             AV_VIDEOMASTER_CHANNEL_IP_2110 &&
-                                         videomaster_context->has_audio;
+    int  status;
+    bool audio_source_applies = videomaster_context->channel_type ==
+                                    AV_VIDEOMASTER_CHANNEL_IP_2110 &&
+                                videomaster_context->has_audio;
 
     if ((status = check_one_timestamp_source(
              videomaster_context, videomaster_context->timestamp_source,
@@ -577,71 +592,80 @@ static int check_timestamp_source(VideoMasterContext *videomaster_context)
         }
     }
 
-    /* Timecode fetch + lock/frame-rate diagnostics: video-specific (the
-     * frame-rate comparison below only makes sense against the video
-     * essence), triggered only by the primary timestamp_source. */
-    if (videomaster_context->timestamp_source ==
-            AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD ||
-        videomaster_context->timestamp_source ==
-            AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD)
+    if (is_ltc_source(videomaster_context->timestamp_source) &&
+        (status = init_ltc_frame_rate(videomaster_context,
+                                      videomaster_context->timestamp_source)) !=
+            0)
+        return status;
+
+    if (audio_source_applies &&
+        is_ltc_source(videomaster_context->audio_timestamp_source) &&
+        videomaster_context->audio_timestamp_source !=
+            videomaster_context->timestamp_source &&
+        (status = init_ltc_frame_rate(
+             videomaster_context,
+             videomaster_context->audio_timestamp_source)) != 0)
+        return status;
+
+    return 0;
+}
+
+static bool is_ltc_source(enum AVVideoMasterTimeStampType source)
+{
+    return source == AV_VIDEOMASTER_TIMESTAMP_LTC_ON_BOARD ||
+           source == AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD;
+}
+
+static int init_ltc_frame_rate(VideoMasterContext *videomaster_context,
+                               enum AVVideoMasterTimeStampType source)
+{
+    VHD_TIMECODE time_code;
+    BOOL32       ltc_source_is_locked = FALSE;
+    float        ltc_source_frame_rate = 0;
+    bool companion = source == AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD;
+    VHD_ERRORCODE error_code = VHD_GetTimecode(
+        videomaster_context->board_handle,
+        companion ? VHD_TC_SRC_LTC_COMPANION_CARD : VHD_TC_SRC_LTC_ONBOARD,
+        &ltc_source_is_locked, &ltc_source_frame_rate, &time_code);
+
+    if (error_code != VHDERR_NOERROR)
     {
-        error_code = VHD_GetTimecode(
-            videomaster_context->board_handle,
-            (videomaster_context->timestamp_source ==
-             AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD)
-                ? VHD_TC_SRC_LTC_COMPANION_CARD
-                : VHD_TC_SRC_LTC_ONBOARD,
-            &ltc_source_is_locked, &ltc_source_frame_rate, &time_code);
-        if (error_code == VHDERR_NOERROR)
-        {
-            av_log(videomaster_context->avctx, AV_LOG_DEBUG,
-                   "LTC Time code: %02d:%02d:%02d:%02d\n", time_code.Hour,
-                   time_code.Minute, time_code.Second, time_code.Frame);
-            if (ltc_source_is_locked)
-            {
-                av_log(videomaster_context->avctx, AV_LOG_DEBUG,
-                       "LTC source is locked at %.3f fps.\n",
-                       ltc_source_frame_rate);
-                if (videomaster_context->has_video)
-                {
-                    float video_frame_rate =
-                        (float)videomaster_context->video_frame_rate_num /
-                        videomaster_context->video_frame_rate_den;
-                    if (ltc_source_frame_rate != video_frame_rate)
-                    {
-                        av_log(videomaster_context->avctx, AV_LOG_WARNING,
-                               "LTC frame rate (%.3f fps) does not match "
-                               "video frame rate (%.3f fps). Timecode and pts "
-                               "deduced from it may be "
-                               "incorrect.\n",
-                               ltc_source_frame_rate, video_frame_rate);
-                    }
-                    else
-                    {
-                        videomaster_context->ltc_frame_rate =
-                            ltc_source_frame_rate;
-                    }
-                }
-            }
-            else
-            {
-                av_log(videomaster_context->avctx, AV_LOG_WARNING,
-                       "LTC source is not locked. No timecode will be "
-                       "available until the LTC source is locked.\n");
-            }
-        }
-        else
-        {
-            char pLastErrorMessage[VHD_MAX_ERROR_STRING_SIZE] = { 0 };
-            VHD_GetLastErrorMessage(pLastErrorMessage,
-                                    VHD_MAX_ERROR_STRING_SIZE);
-            av_log(videomaster_context->avctx, AV_LOG_DEBUG,
-                   "VHDERR = %d - %s\n%s\n", error_code,
-                   VHD_ERRORCODE_ToPrettyString(error_code), pLastErrorMessage);
-            av_log(videomaster_context->avctx, AV_LOG_ERROR,
-                   "Cannot get LTC timecode.\n");
-            return AVERROR(EIO);
-        }
+        char pLastErrorMessage[VHD_MAX_ERROR_STRING_SIZE] = { 0 };
+        VHD_GetLastErrorMessage(pLastErrorMessage, VHD_MAX_ERROR_STRING_SIZE);
+        av_log(videomaster_context->avctx, AV_LOG_DEBUG,
+               "VHDERR = %d - %s\n%s\n", error_code,
+               VHD_ERRORCODE_ToPrettyString(error_code), pLastErrorMessage);
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Cannot get LTC timecode.\n");
+        return AVERROR(EIO);
+    }
+
+    av_log(videomaster_context->avctx, AV_LOG_DEBUG,
+           "LTC Time code: %02d:%02d:%02d:%02d\n", time_code.Hour,
+           time_code.Minute, time_code.Second, time_code.Frame);
+    if (!ltc_source_is_locked || ltc_source_frame_rate <= 0)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_WARNING,
+               "LTC source is not locked. No timecode will be available until "
+               "the LTC source is locked.\n");
+        return 0;
+    }
+
+    av_log(videomaster_context->avctx, AV_LOG_DEBUG,
+           "LTC source is locked at %.3f fps.\n", ltc_source_frame_rate);
+    videomaster_context->ltc_frame_rate[companion] = ltc_source_frame_rate;
+
+    if (videomaster_context->has_video)
+    {
+        float video_frame_rate =
+            (float)videomaster_context->video_frame_rate_num /
+            videomaster_context->video_frame_rate_den;
+        if (FFABS(ltc_source_frame_rate - video_frame_rate) > 0.01f)
+            av_log(videomaster_context->avctx, AV_LOG_WARNING,
+                   "LTC frame rate (%.3f fps) does not match video frame rate "
+                   "(%.3f fps). Timecode and pts deduced from it may be "
+                   "incorrect.\n",
+                   ltc_source_frame_rate, video_frame_rate);
     }
     return 0;
 }

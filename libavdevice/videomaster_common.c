@@ -446,6 +446,24 @@ static int setup_timestamp_source(VideoMasterContext *videomaster_context);
  */
 static void videomaster_packet_queue_flush(VideoMasterPacketQueue *q);
 
+/**
+ * @brief Gets the frame rate of an LTC source for the LTC timestamp
+ * computation.
+ *
+ * Uses the rate read at open time; when the LTC source was not locked then,
+ * reads it again from the board, without caching it (the IP audio capture
+ * thread and read_packet() may both get here).
+ *
+ * @param videomaster_context  VideoMasterContext pointer to the
+ * VideoMasterContext
+ * @param source  LTC timestamp source (ltc_on_board or ltc_companion_card)
+ * @param frame_rate  Receives the LTC frame rate
+ * @return int 0 on success, AVERROR(EIO) while the LTC source is not locked
+ */
+static int get_ltc_frame_rate(VideoMasterContext *videomaster_context,
+                              enum AVVideoMasterTimeStampType source,
+                              float                          *frame_rate);
+
 /** static functions definitions **/
 static int add_device_info_into_list(VideoMasterContext *videomaster_context,
                                      char *board_name, char *serial_number,
@@ -1856,6 +1874,30 @@ int ff_videomaster_get_nb_tx_channels(VideoMasterContext *videomaster_context)
         "channels");
 }
 
+static int get_ltc_frame_rate(VideoMasterContext *videomaster_context,
+                              enum AVVideoMasterTimeStampType source,
+                              float                          *frame_rate)
+{
+    bool   companion = source == AV_VIDEOMASTER_TIMESTAMP_LTC_COMPANION_CARD;
+    BOOL32 locked = FALSE;
+    VHD_TIMECODE time_code;
+
+    *frame_rate = videomaster_context->ltc_frame_rate[companion];
+    if (*frame_rate > 0)
+        return 0;
+
+    if (VHD_GetTimecode(videomaster_context->board_handle,
+                        companion ? VHD_TC_SRC_LTC_COMPANION_CARD
+                                  : VHD_TC_SRC_LTC_ONBOARD,
+                        &locked, frame_rate, &time_code) == VHDERR_NOERROR &&
+        locked && *frame_rate > 0)
+        return 0;
+
+    av_log(videomaster_context->avctx, AV_LOG_DEBUG,
+           "LTC frame rate unknown (LTC source not locked), no timestamp.\n");
+    return AVERROR(EIO);
+}
+
 int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
                                  void               *slot_handle,
                                  enum AVVideoMasterTimeStampType source,
@@ -1865,6 +1907,7 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
     uint32_t     clock_frequency = 0;
     VHD_TIMECODE time_code;
     float        total_frames = 0;
+    float        ltc_frame_rate = 0;
     if (slot_handle == NULL)
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
@@ -1916,12 +1959,13 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
             "successfully",
             "Failed to retrieve LTC "
             "timestamp");
+        GET_AND_CHECK(get_ltc_frame_rate, videomaster_context->avctx,
+                      videomaster_context, source, &ltc_frame_rate);
         total_frames = ((time_code.Hour * 3600) + (time_code.Minute * 60) +
                         time_code.Second) *
-                           videomaster_context->ltc_frame_rate +
+                           ltc_frame_rate +
                        time_code.Frame;
-        *timestamp = (uint64_t)((total_frames * 1000000.0) /
-                                videomaster_context->ltc_frame_rate);
+        *timestamp = (uint64_t)((total_frames * 1000000.0) / ltc_frame_rate);
 
         av_log(videomaster_context->avctx, AV_LOG_DEBUG,
                "Timecode: %02d:%02d:%02d:%02d - Computed timestamp: %lli\n",

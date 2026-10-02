@@ -377,7 +377,9 @@ typedef struct VideoMasterContext
     int64_t ip_last_rejoin_time;       ///< av_gettime_relative()
 
     AVPacket *pending_packet;  ///< audio packet buffered from the current slot
-    float     ltc_frame_rate;  ///< frame rate for LTC timestamp calculation
+    /// LTC frame rate per source (0: on-board, 1: companion card), 0 while
+    /// unknown: the timecode frame number counts LTC frames.
+    float ltc_frame_rate[2];
 
     // audio stream data
     bool           has_audio;    ///< true if the stream has audio data

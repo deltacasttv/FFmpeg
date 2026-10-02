@@ -169,6 +169,7 @@ must fail cleanly (no crash or hang) with the expected error code and message.
 | T10 | Fractional frame rate (29.97, 59.94) with embedded audio | Clean capture, no extraction error, no click or repeated audio |
 | T11 | SD signal (720 px), default and `buffer_packing YUV422_8` | Picture correct in both, no shear |
 | T12 | No signal on the input (cable unplugged), SDI or HDMI | Fails at open with `EIO`, "No signal on board", clean close (no VHD error) |
+| T13 | `timestamp_source ltc_on_board` with an LTC signal (manual): locked at the video rate, at another rate, plugged after start | No crash, monotonic pts; rate mismatch warning; timestamps once LTC locks |
 
 ### HDMI
 
