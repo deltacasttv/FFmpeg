@@ -817,18 +817,30 @@ static int setup_buffer_packing(VideoMasterContext *videomaster_context)
 {
     int                                 av_error = 0;
     const VideoMasterBufferPackingInfo *info = NULL;
-    bool                                has_line_padding = false;
 
     if (videomaster_context->video_buffer_packing ==
         AV_NB_VIDEOMASTER_BUFFER_PACKINGS)
     {
-        has_line_padding =
-            (VHD_SetStreamProperty(videomaster_context->stream_handle,
-                                   VHD_CORE_SP_LINE_PADDING,
-                                   128) == VHDERR_INVALIDPROPERTY);
-        info = get_buffer_packing_info(
-            has_line_padding ? AV_VIDEOMASTER_BUFFER_PACKING_YUV422_10
-                             : AV_VIDEOMASTER_BUFFER_PACKING_YUV422_8);
+        enum AVVideoMasterBufferPacking default_packing =
+            AV_VIDEOMASTER_BUFFER_PACKING_YUV422_10;
+
+        if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_HDMI)
+            default_packing =
+                ff_videomaster_get_buffer_packing_from_cable_bit_sampling_hdmi(
+                    videomaster_context->video_info.hdmi.cable_bit_sampling);
+
+        info = get_buffer_packing_info(default_packing);
+        if (info && info->line_padding_needed &&
+            VHD_SetStreamProperty(videomaster_context->stream_handle,
+                                  VHD_CORE_SP_LINE_PADDING,
+                                  128) != VHDERR_NOERROR)
+        {
+            av_log(videomaster_context->avctx, AV_LOG_VERBOSE,
+                   "Board does not support line padding, falling back to "
+                   "8-bit video buffer packing.\n");
+            info = get_buffer_packing_info(
+                AV_VIDEOMASTER_BUFFER_PACKING_YUV422_8);
+        }
     }
     else
     {

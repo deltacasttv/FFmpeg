@@ -156,7 +156,7 @@ must fail cleanly (no crash or hang) with the expected error code and message.
 
 | Test | Scenario | Expected |
 |---|---|---|
-| T1 | Basic capture | Signal's resolution, frame rate and scan type; no drop |
+| T1 | Basic capture | Signal's resolution, frame rate and scan type; v210 (10-bit) by default; no drop |
 | T3 | Explicit `nb_channels`, `sample_rate`, `sample_size` | Each value applied |
 | T3b | `nb_channels 16` on a source embedding fewer channels | Clean capture, missing channels silent, no extraction error |
 | T3c | `nb_channels 17` | Fails at option parsing, "out of range" |
@@ -167,12 +167,13 @@ must fail cleanly (no crash or hang) with the expected error code and message.
 | T7 | Interlaced signal | Correct field order |
 | T8 | `ffplay` | Picture matches the signal |
 | T10 | Fractional frame rate (29.97, 59.94) with embedded audio | Clean capture, no extraction error, no click or repeated audio |
+| T11 | SD signal (720 px), default and `buffer_packing YUV422_8` | Picture correct in both, no shear |
 
 ### HDMI
 
 | Test | Scenario | Expected |
 |---|---|---|
-| T2 | Basic capture | Clean capture, embedded audio auto-detected |
+| T2 | Basic capture | Clean capture, embedded audio auto-detected; v210 by default (NV12/P010 on a 4:2:0 cable) |
 | T4 | `timestamp_source ptp` | `EINVAL`, "only available for IP channels" |
 | T9 | `ffplay` | Picture correct, embedded audio audible and in sync |
 
