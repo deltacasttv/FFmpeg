@@ -130,7 +130,7 @@ must fail cleanly (no crash or hang) with the expected error code and message.
 | S11 | Video `osc`, audio `ip_audio_timestamp_source hw` | Clean capture, independent pts |
 | S12 | `timestamp_source osc` + `ip_audio_timestamp_source system` | `EINVAL`, "can't both be 'osc'/'system'" |
 | S13 | `timestamp_source rtp`, both essences | Clean capture, monotonic pts |
-| S15 | `timestamp_source ptp`, both essences | Clean capture, monotonic pts; warning if PTP is not locked |
+| S15 | `timestamp_source ptp`, both essences | Clean capture, monotonic pts, each essence starting at 0; warning if PTP is not locked |
 | S16 | Invalid `channel_index` (e.g. 999) | `EINVAL`, "Invalid channel index" |
 | S17 | Explicit video config without `ip_video_width` | `EINVAL`, "ip_video_width is required" |
 | S18 | SDP file with a second (SPS) `m=` entry, unplug/replug a link | Same as S10 |

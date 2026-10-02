@@ -433,6 +433,10 @@ typedef struct VideoMasterContext
     uint64_t system_ts_base_video;
     uint64_t system_ts_base_audio;
 
+    /* PTP timestamp normalization base, per essence, same as the above. */
+    uint64_t ptp_ts_base_video;
+    uint64_t ptp_ts_base_audio;
+
     /* What read_close() has to undo: it also runs after a failed
      * read_header(), at any stage. */
     bool stream_started;           ///< main VHD_StartStream done

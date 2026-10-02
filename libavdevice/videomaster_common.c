@@ -1981,8 +1981,14 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
     }
     else if (source == AV_VIDEOMASTER_TIMESTAMP_PTP)
     {
-        static uint64_t ptp_ts_base = 0;
-        ULONG           ptp_sec = 0, ptp_nsec = 0;
+        bool      is_audio_slot = videomaster_context->ip_audio_slot_handle !=
+                                      NULL &&
+                                  slot_handle ==
+                                      videomaster_context->ip_audio_slot_handle;
+        uint64_t *ptp_ts_base = is_audio_slot
+                                    ? &videomaster_context->ptp_ts_base_audio
+                                    : &videomaster_context->ptp_ts_base_video;
+        ULONG     ptp_sec = 0, ptp_nsec = 0;
 
         /* Board-level absolute time, not tied to a slot: this SDK has no
          * per-slot PTP timestamp API. */
@@ -1993,12 +1999,14 @@ int ff_videomaster_get_timestamp(VideoMasterContext *videomaster_context,
                       "PTP time retrieved successfully",
                       "Failed to retrieve PTP time");
         *timestamp = (uint64_t)ptp_sec * 1000000 + ptp_nsec / 1000;
-        if (ptp_ts_base == 0)
-            ptp_ts_base = *timestamp;
-        *timestamp -= ptp_ts_base;
+        if (*ptp_ts_base == 0)
+            *ptp_ts_base = *timestamp;
+        *timestamp -= *ptp_ts_base;
 
         av_log(videomaster_context->avctx, AV_LOG_DEBUG,
-               "PTP timestamp: %llu us\n", (unsigned long long)*timestamp);
+               "PTP timestamp (%s): %llu us\n",
+               is_audio_slot ? "audio" : "video",
+               (unsigned long long)*timestamp);
     }
     else
     {
