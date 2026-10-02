@@ -1615,7 +1615,10 @@ Video width for explicit ST2110-20 stream mode.
 Video height for explicit ST2110-20 stream mode.
 
 @item ip_video_framerate_num
-Video framerate numerator for explicit ST2110-20 stream mode.
+Video framerate numerator for explicit ST2110-20 stream mode. For interlaced
+video, give the frame rate, not the field rate (e.g. 25 for 1080i50). Any
+notation of the rate is accepted: 25/1 and 25000/1000 select the same
+standard.
 
 @item ip_video_framerate_den
 Video framerate denominator for explicit ST2110-20 stream mode.
