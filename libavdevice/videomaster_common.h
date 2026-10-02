@@ -433,6 +433,12 @@ typedef struct VideoMasterContext
     uint64_t system_ts_base_video;
     uint64_t system_ts_base_audio;
 
+    /* What read_close() has to undo: it also runs after a failed
+     * read_header(), at any stage. */
+    bool stream_started;           ///< main VHD_StartStream done
+    bool ip_audio_stream_started;  ///< non-sync IP audio VHD_StartStream done
+    bool multicast_joined;         ///< IP multicast joins attempted
+
     /* Non-sync IP audio capture thread + its packet queue (see
      * videomaster_ip.c). */
     bool                   ip_audio_thread_active;

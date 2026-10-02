@@ -109,32 +109,18 @@ static int extract_context_or_log(AVFormatContext     *avctx,
                                   VideoMasterContext **videomaster_context);
 
 /**
- * @brief Common error handling for board-only operations
+ * @brief Logs a read_header() error and returns its code.
  *
- * This function handles errors that occur before the stream is started by
- * logging the error message and closing the board handle.
- *
- * @param videomaster_context Pointer to the VideoMaster context
- * @param message Error message to log
- * @param error_code Error code to return
- * @return int 0 on success, or negative AVERROR code on failure
- */
-static int handle_board_error(VideoMasterContext *videomaster_context,
-                              const char *message, int error_code);
-
-/**
- * @brief Common error handling for stream operations
- *
- * This function handles errors that occur during stream operations by logging
- * the error message, closing the stream handle, and closing the board handle.
+ * Nothing is released here: read_close() undoes whatever was done, since
+ * the demuxer sets FF_INFMT_FLAG_INIT_CLEANUP.
  *
  * @param videomaster_context Pointer to the VideoMaster context
  * @param message Error message to log
  * @param error_code Error code to return
- * @return int 0 on success, or negative AVERROR code on failure
+ * @return error_code
  */
-static int handle_stream_error(VideoMasterContext *videomaster_context,
-                               const char *message, int error_code);
+static int header_error(VideoMasterContext *videomaster_context,
+                        const char *message, int error_code);
 
 /**
  * @brief Parses command line arguments for the VideoMaster DELTACAST(c) device.
@@ -326,16 +312,15 @@ static int check_header_arguments(VideoMasterData    *videomaster_data,
 
     if ((status = check_audio_properties(videomaster_context)) != 0)
     {
-        return handle_board_error(videomaster_context,
-                                  "Failed to check audio properties integrity",
-                                  status);
+        return header_error(videomaster_context,
+                            "Failed to check audio properties integrity",
+                            status);
     }
 
     if ((status = check_channel_index(videomaster_context)) != 0)
     {
-        return handle_board_error(videomaster_context,
-                                  "Failed to check channel index range",
-                                  status);
+        return header_error(videomaster_context,
+                            "Failed to check channel index range", status);
     }
 
     videomaster_context->channel_type =
@@ -349,9 +334,9 @@ static int check_header_arguments(VideoMasterData    *videomaster_data,
         if ((status = ff_videomaster_validate_arguments_hdmi(
                  videomaster_data, videomaster_context)) != 0)
         {
-            return handle_board_error(
-                videomaster_context,
-                "Invalid or missing arguments for HDMI channel", status);
+            return header_error(videomaster_context,
+                                "Invalid or missing arguments for HDMI channel",
+                                status);
         }
     }
     else if (videomaster_context->channel_type ==
@@ -360,7 +345,7 @@ static int check_header_arguments(VideoMasterData    *videomaster_data,
         if ((status = ff_videomaster_validate_arguments_ip(
                  videomaster_data, videomaster_context)) != 0)
         {
-            return handle_board_error(
+            return header_error(
                 videomaster_context,
                 "Invalid or missing arguments for IP 2110 channel", status);
         }
@@ -370,9 +355,9 @@ static int check_header_arguments(VideoMasterData    *videomaster_data,
         if ((status = ff_videomaster_validate_arguments_sdi(
                  videomaster_data, videomaster_context)) != 0)
         {
-            return handle_board_error(
-                videomaster_context,
-                "Invalid or missing arguments for SDI channel", status);
+            return header_error(videomaster_context,
+                                "Invalid or missing arguments for SDI channel",
+                                status);
         }
     }
 
@@ -381,16 +366,14 @@ static int check_header_arguments(VideoMasterData    *videomaster_data,
      */
     if ((status = ff_videomaster_disable_loopback(videomaster_context)) != 0)
     {
-        return handle_board_error(videomaster_context,
-                                  "Failed to disable loopback on channel",
-                                  status);
+        return header_error(videomaster_context,
+                            "Failed to disable loopback on channel", status);
     }
 
     if ((status = check_channel_integrity(videomaster_context)) != 0)
     {
-        return handle_board_error(videomaster_context,
-                                  "Failed to check channel index integrity",
-                                  status);
+        return header_error(videomaster_context,
+                            "Failed to check channel index integrity", status);
     }
 
     if ((status = check_timestamp_source(videomaster_context)) != 0)
@@ -632,20 +615,10 @@ static int extract_context_or_log(AVFormatContext     *avctx,
     return 0;
 }
 
-static int handle_board_error(VideoMasterContext *videomaster_context,
-                              const char *message, int error_code)
+static int header_error(VideoMasterContext *videomaster_context,
+                        const char *message, int error_code)
 {
     av_log(videomaster_context->avctx, AV_LOG_ERROR, "%s\n", message);
-    ff_videomaster_close_board_handle(videomaster_context);
-    return error_code;
-}
-
-static int handle_stream_error(VideoMasterContext *videomaster_context,
-                               const char *message, int error_code)
-{
-    av_log(videomaster_context->avctx, AV_LOG_ERROR, "%s\n", message);
-    ff_videomaster_close_stream_handle(videomaster_context);
-    ff_videomaster_close_board_handle(videomaster_context);
     return error_code;
 }
 
@@ -1091,12 +1064,12 @@ static int setup_streams(VideoMasterContext *videomaster_context)
 {
     int error_code = setup_video_stream(videomaster_context);
     if (error_code != 0)
-        return handle_stream_error(videomaster_context,
-                                   "Failed to setup video stream", error_code);
+        return header_error(videomaster_context, "Failed to setup video stream",
+                            error_code);
     error_code = setup_audio_stream(videomaster_context);
     if (error_code != 0)
-        return handle_stream_error(videomaster_context,
-                                   "Failed to setup audio stream", error_code);
+        return header_error(videomaster_context, "Failed to setup audio stream",
+                            error_code);
 
     return 0;
 }
@@ -1211,6 +1184,10 @@ int ff_videomaster_list_input_devices(AVFormatContext         *avctx,
 
     ret = list_input_devices(avctx, device_list);
 
+    /* read_close() is not called after a listing. */
+    if (videomaster_data)
+        av_freep(&videomaster_data->context);
+
     av_log_set_level(previous_log_level);
 
     return ret;
@@ -1276,7 +1253,7 @@ int ff_videomaster_read_close(AVFormatContext *avctx)
     if (ff_videomaster_release_data(videomaster_context) != 0)
     {
         av_log(avctx, AV_LOG_ERROR, "Failed to release data\n");
-        return AVERROR(EIO);
+        return_code = AVERROR(EIO);
     }
 
     if (ff_videomaster_stop_stream(videomaster_context) != 0)
@@ -1370,18 +1347,25 @@ int ff_videomaster_read_header(AVFormatContext *avctx)
         return status;
     }
 
-    if ((videomaster_context->has_video || videomaster_context->has_audio) &&
-        (status = ff_videomaster_start_stream(videomaster_context)) != 0)
+    if (!videomaster_context->has_video && !videomaster_context->has_audio)
     {
-        return handle_stream_error(videomaster_context,
-                                   "Failed to start stream\n", status);
+        av_log(avctx, AV_LOG_ERROR, "No signal on board %u channel %u\n",
+               videomaster_context->board_index,
+               videomaster_context->channel_index);
+        return AVERROR(EIO);
+    }
+
+    if ((status = ff_videomaster_start_stream(videomaster_context)) != 0)
+    {
+        return header_error(videomaster_context, "Failed to start stream\n",
+                            status);
     }
 
     if ((status = setup_streams(videomaster_context)) != 0)
     {
-        return handle_stream_error(videomaster_context,
-                                   "Failed to setup Audio and Video streams\n",
-                                   status);
+        return header_error(videomaster_context,
+                            "Failed to setup Audio and Video streams\n",
+                            status);
     }
 
     /* After setup_streams: the thread needs ctx->audio_stream. */
@@ -1391,9 +1375,9 @@ int ff_videomaster_read_header(AVFormatContext *avctx)
         (status = ff_videomaster_start_ip_audio_thread(videomaster_context)) !=
             0)
     {
-        return handle_stream_error(videomaster_context,
-                                   "Failed to start IP audio capture thread\n",
-                                   status);
+        return header_error(videomaster_context,
+                            "Failed to start IP audio capture thread\n",
+                            status);
     }
 
     videomaster_context->last_data_time = av_gettime_relative();
@@ -2690,4 +2674,5 @@ const FFInputFormat ff_videomaster_demuxer = {
     .read_header = ff_videomaster_read_header,
     .read_packet = ff_videomaster_read_packet,
     .read_close = ff_videomaster_read_close,
+    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
 };

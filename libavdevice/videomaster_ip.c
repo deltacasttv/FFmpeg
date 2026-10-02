@@ -835,8 +835,7 @@ typedef struct MulticastGroupRef
 } MulticastGroupRef;
 
 /* The groups joined at start-up, with their port: must match
- * ff_videomaster_join_multicast_group() and
- * ff_videomaster_open_audio_stream_ip(). */
+ * ff_videomaster_join_multicast_group() and join_audio_multicast_groups(). */
 static int list_multicast_groups(VideoMasterContext *ctx,
                                  MulticastGroupRef   out[4])
 {
@@ -1718,32 +1717,34 @@ int ff_videomaster_parse_audio_sdp_file(VideoMasterData    *videomaster_data,
     return 0;
 }
 
+static int join_audio_multicast_groups(VideoMasterContext *ctx);
+
 int ff_videomaster_open_stream_ip(VideoMasterContext *ctx)
 {
-    if (ctx->has_video)
-    {
-        int ret = ff_videomaster_open_video_stream_ip(ctx);
-        if (ret != 0)
-            return ret;
-    }
-    if (ctx->has_audio)
-    {
-        int ret = ff_videomaster_open_audio_stream_ip(ctx);
-        if (ret != 0)
-            return ret;
-    }
-    return 0;
-}
+    int ret;
 
-int ff_videomaster_open_video_stream_ip(VideoMasterContext *ctx)
-{
-    if (ff_videomaster_join_multicast_group(ctx) != 0)
+    if (ctx->has_video && (ret = ff_videomaster_open_video_stream_ip(ctx)) != 0)
+        return ret;
+    if (ctx->has_audio && (ret = ff_videomaster_open_audio_stream_ip(ctx)) != 0)
+        return ret;
+
+    /* Groups are board-wide: an instance refused with EBUSY must not leave
+     * the groups of the instance using the channel. A partial join is left
+     * too, best effort. */
+    ctx->multicast_joined = true;
+    if (ctx->has_video && ff_videomaster_join_multicast_group(ctx) != 0)
     {
         av_log(ctx->avctx, AV_LOG_ERROR,
                "Failed to prepare IP board for video stream.\n");
         return AVERROR(EIO);
     }
+    if (ctx->has_audio && (ret = join_audio_multicast_groups(ctx)) != 0)
+        return ret;
+    return 0;
+}
 
+int ff_videomaster_open_video_stream_ip(VideoMasterContext *ctx)
+{
     VHD_ERRORCODE open_status = (VHD_ERRORCODE)VHD_OpenEssenceStreamHandle(
         ctx->board_handle, VHD_ET_ST2110_20, VHD_RX_CHANNEL, ctx->channel_index,
         NULL, &ctx->stream_handle);
@@ -1765,11 +1766,11 @@ int ff_videomaster_open_video_stream_ip(VideoMasterContext *ctx)
     return 0;
 }
 
-int ff_videomaster_open_audio_stream_ip(VideoMasterContext *ctx)
+/* Applies the SSM source filter from the SDP file when there is one. */
+static int join_audio_multicast_groups(VideoMasterContext *ctx)
 {
     int av_error = 0;
 
-    /* Join audio multicast, applying SSM source filter from SDP when present */
     if (ctx->ip_audio_sdp_mode)
     {
         static const VHD_IP_BRD_ETHERNETPORT eth_ports[] = {
@@ -1818,8 +1819,11 @@ int ff_videomaster_open_audio_stream_ip(VideoMasterContext *ctx)
                           "Failed to join audio SPS multicast group");
         }
     }
+    return 0;
+}
 
-    /* Open audio essence stream handle */
+int ff_videomaster_open_audio_stream_ip(VideoMasterContext *ctx)
+{
     VHD_ERRORCODE open_status = (VHD_ERRORCODE)VHD_OpenEssenceStreamHandle(
         ctx->board_handle, VHD_ET_ST2110_30, VHD_RX_CHANNEL,
         ctx->ip_audio_channel_index, NULL, &ctx->ip_audio_stream_handle);

@@ -2413,6 +2413,7 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
                       videomaster_context->avctx, videomaster_context->avctx,
                       VHD_StartStream(start_handle),
                       "Stream started successfully", "Failed to start stream");
+        videomaster_context->stream_started = true;
 
         /* Non-sync mode with both essences: video and audio are two
          * independent streams, so audio needs its own VHD_StartStream. Its
@@ -2428,6 +2429,7 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
                               videomaster_context->ip_audio_stream_handle),
                           "Audio stream started successfully",
                           "Failed to start audio stream");
+            videomaster_context->ip_audio_stream_started = true;
         }
     }
 
@@ -2439,6 +2441,8 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
 
 int ff_videomaster_stop_stream(VideoMasterContext *videomaster_context)
 {
+    int ret = 0;
+
     release_audio_info(videomaster_context,
                        &videomaster_context->audio_info.sdi.audio_info);
 
@@ -2451,20 +2455,18 @@ int ff_videomaster_stop_stream(VideoMasterContext *videomaster_context)
                  videomaster_context->has_audio)
             stop_handle = videomaster_context->ip_audio_stream_handle;
 
-        int ret = ff_videomaster_handle_vhd_status(
-            videomaster_context->avctx, VHD_StopStream(stop_handle),
-            "Stream stopped successfully", "Failed to stop stream");
+        if (videomaster_context->stream_started)
+            ret = ff_videomaster_handle_vhd_status(
+                videomaster_context->avctx, VHD_StopStream(stop_handle),
+                "Stream stopped successfully", "Failed to stop stream");
+        videomaster_context->stream_started = false;
 
-        /* Non-sync mode with both essences: video and audio are two
-         * independent streams that were both started in
-         * ff_videomaster_start_stream(), so both must be stopped too. */
-        if (!videomaster_context->ip_sync_mode &&
-            videomaster_context->has_video && videomaster_context->has_audio)
+        /* Before stopping the audio stream: the thread may still be
+         * reading a locked slot's buffer. */
+        ff_videomaster_stop_ip_audio_thread(videomaster_context);
+
+        if (videomaster_context->ip_audio_stream_started)
         {
-            /* Before stopping the audio stream: the thread may still be
-             * reading a locked slot's buffer. */
-            ff_videomaster_stop_ip_audio_thread(videomaster_context);
-
             int audio_ret = ff_videomaster_handle_vhd_status(
                 videomaster_context->avctx,
                 VHD_StopStream(videomaster_context->ip_audio_stream_handle),
@@ -2472,17 +2474,23 @@ int ff_videomaster_stop_stream(VideoMasterContext *videomaster_context)
                 "Failed to stop audio stream");
             if (ret == 0)
                 ret = audio_ret;
+            videomaster_context->ip_audio_stream_started = false;
         }
 
-        ff_videomaster_leave_multicast_group(videomaster_context);
+        if (videomaster_context->multicast_joined)
+            ff_videomaster_leave_multicast_group(videomaster_context);
+        videomaster_context->multicast_joined = false;
         ff_videomaster_close_streams_ip(videomaster_context);
         return ret;
     }
 
-    return ff_videomaster_handle_vhd_status(
-        videomaster_context->avctx,
-        VHD_StopStream(videomaster_context->stream_handle),
-        "Stream stopped successfully", "Failed to stop stream");
+    if (videomaster_context->stream_started)
+        ret = ff_videomaster_handle_vhd_status(
+            videomaster_context->avctx,
+            VHD_StopStream(videomaster_context->stream_handle),
+            "Stream stopped successfully", "Failed to stop stream");
+    videomaster_context->stream_started = false;
+    return ret;
 }
 
 const char *ff_videomaster_timestamp_type_to_string(

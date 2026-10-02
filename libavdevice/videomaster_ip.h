@@ -208,14 +208,13 @@ int ff_videomaster_parse_sdp_file(VideoMasterData    *videomaster_data,
 int ff_videomaster_parse_audio_sdp_file(
     VideoMasterData *videomaster_data, VideoMasterContext *videomaster_context);
 
-/**
- * @brief Opens and configures the video ST2110-20 stream handle.
- * Joins video multicast and opens the essence handle.
- */
-/** @brief Opens video and audio stream handles. Symmetric to
- * ff_videomaster_start_stream_ip. */
+/** @brief Opens the video and audio stream handles, then joins their
+ * multicast groups. Symmetric to ff_videomaster_start_stream_ip. */
 int ff_videomaster_open_stream_ip(VideoMasterContext *ctx);
 
+/**
+ * @brief Opens the video ST2110-20 essence stream handle.
+ */
 int ff_videomaster_open_video_stream_ip(VideoMasterContext *ctx);
 
 /**
@@ -225,9 +224,7 @@ int ff_videomaster_open_video_stream_ip(VideoMasterContext *ctx);
 int ff_videomaster_start_audio_stream_ip(VideoMasterContext *ctx);
 
 /**
- * @brief Opens and configures the audio ST2110-30 stream handle.
- * Joins audio multicast, opens the essence handle and sets all stream
- * properties. Creates the StreamSyncHandle when ip_sync_mode is true.
+ * @brief Opens the audio ST2110-30 essence stream handle.
  */
 int ff_videomaster_open_audio_stream_ip(VideoMasterContext *ctx);
 

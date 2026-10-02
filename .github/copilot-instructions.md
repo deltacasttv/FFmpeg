@@ -125,7 +125,7 @@ must fail cleanly (no crash or hang) with the expected error code and message.
 | S6 | Both essences from SDP files, `ip_sync 0` | Clean capture |
 | S7 | `ip_video_destination` + `ip_video_sdp_file` | `EINVAL`, "mutually exclusive" |
 | S8 | `ip_sync 1` with a single essence | `EINVAL`, "ip_sync requires both video and audio" |
-| S9 | Second instance on the same board/channel | `EBUSY` |
+| S9 | Second instance on the same board/channel | `EBUSY`; the first instance keeps receiving (no multicast leave) |
 | S10 | ST 2022-7: unplug/replug one redundant link | No drop or pts gap |
 | S11 | Video `osc`, audio `ip_audio_timestamp_source hw` | Clean capture, independent pts |
 | S12 | `timestamp_source osc` + `ip_audio_timestamp_source system` | `EINVAL`, "can't both be 'osc'/'system'" |
@@ -168,6 +168,7 @@ must fail cleanly (no crash or hang) with the expected error code and message.
 | T8 | `ffplay` | Picture matches the signal |
 | T10 | Fractional frame rate (29.97, 59.94) with embedded audio | Clean capture, no extraction error, no click or repeated audio |
 | T11 | SD signal (720 px), default and `buffer_packing YUV422_8` | Picture correct in both, no shear |
+| T12 | No signal on the input (cable unplugged), SDI or HDMI | Fails at open with `EIO`, "No signal on board", clean close (no VHD error) |
 
 ### HDMI
 
