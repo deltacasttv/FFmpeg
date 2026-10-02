@@ -474,8 +474,8 @@ typedef struct VideoMasterData
     int64_t sample_rate;       ///< sample rate of the audio stream
     int64_t sample_size;       ///< bits per sample in the audio stream
     int64_t buffer_packing;    ///< buffer packing format
-    int64_t dual_stream;  ///< 0/1 if the stream must be configured with 3G-B-DS
-                          ///< interface
+    int     dual_stream;  ///< AV_OPT_TYPE_BOOL: 0/1, configure the stream with
+                          ///< the 3G-B-DS interface
     int64_t sources_loglevel;  ///< log level applied while listing sources
                                ///< (-sources), -1 to keep the caller's one
     int64_t no_data_timeout;   ///< in microseconds; end the capture once
