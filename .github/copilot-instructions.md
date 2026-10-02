@@ -173,9 +173,10 @@ must fail cleanly (no crash or hang) with the expected error code and message.
 
 | Test | Scenario | Expected |
 |---|---|---|
-| T2 | Basic capture | Clean capture, embedded audio auto-detected; v210 by default (NV12/P010 on a 4:2:0 cable) |
+| T2 | Basic video capture | Clean capture; v210 by default (NV12/P010 on a 4:2:0 cable) |
+| T2b | Source emitting embedded PCM audio (manual) | Audio stream auto-detected with the source's channel count and sample rate, no discontinuity |
 | T4 | `timestamp_source ptp` | `EINVAL`, "only available for IP channels" |
-| T9 | `ffplay` | Picture correct, embedded audio audible and in sync |
+| T9 | `ffplay` | Picture correct; with an audio source, embedded audio audible and in sync |
 
 ## Search Commands (Multi-OS)
 
