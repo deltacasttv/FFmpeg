@@ -183,7 +183,65 @@ static int setup_video_stream(VideoMasterContext *videomaster_context);
  *
  * Input layout: all top-field lines first, then all bottom-field lines.
  * Output layout: alternating lines (top0, bottom0, top1, bottom1, ...).
+ *
+ * @param videomaster_context VideoMasterContext pointer to the VideoMaster
+ * context, giving the frame height and buffer size
+ * @param dst Destination frame buffer
+ * @param src Field-sequential source frame buffer
  */
+static void
+interleave_sequential_fields(const VideoMasterContext *videomaster_context,
+                             uint8_t *dst, const uint8_t *src);
+
+/**
+ * @brief Checks a single timestamp source value for capability/presence
+ * support, independent of which option (video or IP audio) it came from.
+ * @param videomaster_context VideoMasterContext pointer to the VideoMaster
+ * context
+ * @param source The timestamp source value to validate
+ * @param option_name Name of the option this value came from, used in error
+ * messages
+ * @return int 0 on success, or negative AVERROR code on failure
+ */
+static int check_one_timestamp_source(VideoMasterContext *videomaster_context,
+                                      enum AVVideoMasterTimeStampType source,
+                                      const char *option_name);
+
+/**
+ * @brief Unlocks a slot with the unlock function of the channel type.
+ * @param ctx VideoMasterContext pointer to the VideoMaster context
+ * @param slot Slot returned by the channel type's lock function
+ */
+static void unlock_slot_dispatch(VideoMasterContext *ctx, void *slot);
+
+/**
+ * @brief Lists the input devices of all the boards (-sources).
+ * @param avctx AVFormatContext pointer
+ * @param device_list List to fill
+ * @return int 0 on success, or negative AVERROR code on failure
+ */
+static int list_input_devices(AVFormatContext         *avctx,
+                              struct AVDeviceInfoList *device_list);
+
+/**
+ * @brief Local equivalent of libavformat's internal ff_check_interrupt().
+ * @param avctx AVFormatContext pointer
+ * @return int nonzero if the user asked to interrupt the capture
+ */
+static int videomaster_check_interrupt(AVFormatContext *avctx);
+
+/**
+ * @brief Reads the next packet: the audio packet pre-buffered from the
+ * previous slot, then a queued IP audio packet, otherwise the content of
+ * the next locked slot (video, its audio being pre-buffered, or audio).
+ * @param avctx AVFormatContext pointer
+ * @param pkt Packet to fill
+ * @return int 0 on success, AVERROR(EAGAIN) when no slot is ready, or
+ * another negative AVERROR code on failure
+ */
+static int read_packet_internal(AVFormatContext *avctx, AVPacket *pkt);
+
+/**** Static functions definitions */
 static void
 interleave_sequential_fields(const VideoMasterContext *videomaster_context,
                              uint8_t *dst, const uint8_t *src)
@@ -200,7 +258,6 @@ interleave_sequential_fields(const VideoMasterContext *videomaster_context,
     }
 }
 
-/**** Static functions definitions */
 static int check_audio_properties(VideoMasterContext *videomaster_context)
 {
     enum AVVideoMasterChannelType channel_type =
@@ -388,16 +445,6 @@ static int check_header_arguments(VideoMasterData    *videomaster_data,
     return 0;
 }
 
-/**
- * @brief Checks a single timestamp source value for capability/presence
- * support, independent of which option (video or IP audio) it came from.
- * @param videomaster_context VideoMasterContext pointer to the VideoMaster
- * context
- * @param source The timestamp source value to validate
- * @param option_name Name of the option this value came from, used in error
- * messages
- * @return int 0 on success, or negative AVERROR code on failure
- */
 static int check_one_timestamp_source(VideoMasterContext *videomaster_context,
                                       enum AVVideoMasterTimeStampType source,
                                       const char *option_name)
@@ -1166,9 +1213,6 @@ static void unlock_slot_dispatch(VideoMasterContext *ctx, void *slot)
     }
 }
 
-static int list_input_devices(AVFormatContext         *avctx,
-                              struct AVDeviceInfoList *device_list);
-
 int ff_videomaster_list_input_devices(AVFormatContext         *avctx,
                                       struct AVDeviceInfoList *device_list)
 {
@@ -1388,7 +1432,6 @@ int ff_videomaster_read_header(AVFormatContext *avctx)
     return 0;
 }
 
-/* Local equivalent of libavformat's internal ff_check_interrupt(). */
 static int videomaster_check_interrupt(AVFormatContext *avctx)
 {
     AVIOInterruptCB *cb = &avctx->interrupt_callback;

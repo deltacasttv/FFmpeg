@@ -38,6 +38,94 @@
 #include <VideoMasterHD_String.h>
 #endif
 
+/** static functions declaration **/
+
+/**
+ * @brief Locks the next slot of the HDMI stream into slot_handle.
+ *
+ * @param videomaster_context  VideoMasterContext pointer to the
+ * VideoMasterContext
+ * @return int 0 on success, negative AVERROR code on failure
+ */
+static int lock_slot_hdmi(VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Unlocks the HDMI slot held in slot_handle, if any.
+ *
+ * @param videomaster_context  VideoMasterContext pointer to the
+ * VideoMasterContext
+ * @return int 0 on success, negative AVERROR code on failure
+ */
+static int unlock_slot_hdmi(VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Gets the audio sample size from the Audio InfoFrame, or from the
+ * AES status when the InfoFrame refers to the stream header.
+ *
+ * @param videomaster_context  VideoMasterContext pointer to the
+ * VideoMasterContext
+ * @param audio_info_frame  Audio InfoFrame of the slot
+ * @param aes_status  AES status of the slot, used when the InfoFrame refers
+ * to the stream header
+ * @param sample_size  Receives the sample size in bits (16, 20 or 24)
+ * @return int 0 on success, AVERROR(EINVAL) for an unsupported value
+ */
+static int get_sample_size_from_audio_infoframe_and_aes_status_hdmi(
+    VideoMasterContext    *videomaster_context,
+    VHD_DV_AUDIO_INFOFRAME audio_info_frame, VHD_DV_AUDIO_AES_STS aes_status,
+    uint32_t *sample_size);
+
+/**
+ * @brief Gets the audio sample rate from the Audio InfoFrame, or from the
+ * AES status when the InfoFrame refers to the stream header.
+ *
+ * @param videomaster_context  VideoMasterContext pointer to the
+ * VideoMasterContext
+ * @param audio_info_frame  Audio InfoFrame of the slot
+ * @param aes_status  AES status of the slot, used when the InfoFrame refers
+ * to the stream header
+ * @param sample_rate  Receives the sample rate in Hz
+ * @return int 0 on success, AVERROR(EINVAL) for an unsupported value
+ */
+static int get_sample_rate_from_audio_infoframe_and_aes_status_hdmi(
+    VideoMasterContext    *videomaster_context,
+    VHD_DV_AUDIO_INFOFRAME audio_info_frame, VHD_DV_AUDIO_AES_STS aes_status,
+    uint32_t *sample_rate);
+
+/**
+ * @brief Gets the number of audio channels from the Audio InfoFrame.
+ *
+ * @param videomaster_context  VideoMasterContext pointer to the
+ * VideoMasterContext
+ * @param audio_info_frame  Audio InfoFrame of the slot
+ * @param aes_status  AES status of the slot, used when the InfoFrame refers
+ * to the stream header
+ * @param nb_channels  Receives the number of channels
+ * @return int 0 on success, AVERROR(EINVAL) for an unsupported value
+ */
+static int get_nb_channels_from_audio_infoframe_and_aes_status_hdmi(
+    VideoMasterContext    *videomaster_context,
+    VHD_DV_AUDIO_INFOFRAME audio_info_frame, VHD_DV_AUDIO_AES_STS aes_status,
+    uint32_t *nb_channels);
+
+/**
+ * @brief Gets the audio codec from the Audio InfoFrame coding type (and the
+ * AES status when it refers to the stream header): linear PCM only.
+ *
+ * @param videomaster_context  VideoMasterContext pointer to the
+ * VideoMasterContext
+ * @param audio_info_frame  Audio InfoFrame of the slot
+ * @param aes_status  AES status of the slot, used when the InfoFrame refers
+ * to the stream header
+ * @param codec_id  Receives the PCM codec matching the sample size
+ * @return int 0 on success, AVERROR(EINVAL) for a non-PCM or unsupported
+ * audio
+ */
+static int get_codec_from_audio_infoframe_and_aes_status_hdmi(
+    VideoMasterContext    *videomaster_context,
+    VHD_DV_AUDIO_INFOFRAME audio_info_frame, VHD_DV_AUDIO_AES_STS aes_status,
+    enum AVCodecID *codec_id);
+
 /* Forward declared from videomaster_common.c */
 extern int
 ff_videomaster_open_stream_handle(VideoMasterContext *videomaster_context);
@@ -68,7 +156,8 @@ int ff_videomaster_validate_arguments_hdmi(
     }
 
     /* IP arguments must not be specified for HDMI */
-    if (ff_videomaster_reject_ip_params(videomaster_data, videomaster_context) != 0)
+    if (ff_videomaster_reject_ip_params(videomaster_data,
+                                        videomaster_context) != 0)
         return AVERROR(EINVAL);
 
     return 0;
@@ -906,18 +995,17 @@ int ff_videomaster_start_stream_hdmi(VideoMasterContext *videomaster_context)
     return 0;
 }
 
-int ff_videomaster_lock_next_slot_hdmi(VideoMasterContext *ctx,
-                                       uint8_t **video_buf, uint32_t *video_size,
-                                       uint8_t **audio_buf, uint32_t *audio_size,
-                                       void    **slot_to_unlock)
+int ff_videomaster_lock_next_slot_hdmi(
+    VideoMasterContext *ctx, uint8_t **video_buf, uint32_t *video_size,
+    uint8_t **audio_buf, uint32_t *audio_size, void **slot_to_unlock)
 {
     int ret = ff_videomaster_get_data(ctx);
     if (ret != 0)
         return ret;
-    *video_buf      = ctx->video_buffer;
-    *video_size     = ctx->video_buffer_size;
-    *audio_buf      = ctx->audio_buffer;
-    *audio_size     = ctx->audio_buffer_size;
+    *video_buf = ctx->video_buffer;
+    *video_size = ctx->video_buffer_size;
+    *audio_buf = ctx->audio_buffer;
+    *audio_size = ctx->audio_buffer_size;
     *slot_to_unlock = ctx->slot_handle;
     return 0;
 }

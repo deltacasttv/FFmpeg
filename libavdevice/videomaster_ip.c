@@ -47,7 +47,14 @@
 #include <VideoMasterHD_SDP.h>
 #endif
 
-/* ---- Private helpers ---- */
+typedef struct MulticastGroupRef
+{
+    uint32_t             addr;
+    const VHD_SDP_MEDIA *sdp_media;  ///< NULL in explicit mode
+    int                  port;       ///< index into ip_eth_ports
+} MulticastGroupRef;
+
+/** static functions declaration **/
 
 /**
  * @brief   Parses an IPv4 address string in dotted decimal notation and
@@ -59,6 +66,236 @@
  * host-byte-order IPv4 address.
  * @return int 0 on success, or negative AVERROR code on failure.
  */
+static int parse_ipv4_address(const char *ip_string, uint32_t *out_address);
+
+/**
+ * @brief Returns true when addr falls within the IPv4 multicast range
+ *        (224.0.0.0/4 — first octet in [224, 239]).
+ *
+ * @param ipv4_addr Host-byte-order 32-bit IPv4 address.
+ * @return true for a multicast address.
+ */
+static bool ip_is_multicast(uint32_t ipv4_addr);
+
+/**
+ * @brief   Validates the arguments for an IP/ST2110 stream (video side).
+ * Returns AVERROR(EINVAL) if any argument is invalid.
+ *
+ * @param videomaster_data    IP/ST2110 stream data structure.
+ * @param videomaster_context IP/ST2110 stream context.
+ * @return int               0 if arguments are valid, AVERROR(EINVAL)
+ * otherwise.
+ */
+static int validate_video_arguments(VideoMasterData    *videomaster_data,
+                                    VideoMasterContext *videomaster_context);
+
+/**
+ * @brief   Validates the arguments for an IP/ST2110 stream (network side).
+ * Returns AVERROR(EINVAL) if any argument is invalid.
+ *
+ * @param videomaster_data    IP/ST2110 stream data structure.
+ * @param videomaster_context IP/ST2110 stream context.
+ * @return int               0 if arguments are valid, AVERROR(EINVAL)
+ * otherwise.
+ */
+static int validate_network_arguments(VideoMasterData    *videomaster_data,
+                                      VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Searches the ST2110-20 video standard table for an entry that
+ *        matches the explicit resolution, framerate and interlacing stored
+ *        in the context.
+ *
+ * The match is done by calling VHD_ST2110_20_GetVideoCharacteristics for
+ * every known standard and comparing with the user-supplied parameters.
+ * The framerate is compared as a rational: "25/1" and "25000/1000" match the
+ * same standard, and "30000/1001" matches the 29.97 one.
+ *
+ * @param videomaster_context Context carrying the explicit video
+ * parameters.
+ * @param video_standard      Output: matched ST2110-20 video standard.
+ * @return 0 on success, AVERROR(EINVAL) if no standard matches.
+ */
+static int get_st2110_video_standard_from_explicit(
+    VideoMasterContext           *videomaster_context,
+    VHD_ST2110_20_VIDEO_STANDARD *video_standard);
+
+/**
+ * @brief Extracts the IPv4 address from a VHD_SDP_IP_ADDRESS.
+ *
+ * The SDK returns AddressV4 in host byte order, the order the board API
+ * expects, although VideoMasterHD_SDP.h documents it as network order.
+ *
+ * Only IPv4 is supported: the caller must validate the Version field first.
+ *
+ * @param addr SDP address parsed by the SDK.
+ * @return The IPv4 address, in host byte order.
+ */
+static uint32_t sdp_ip_to_uint32(const VHD_SDP_IP_ADDRESS *addr);
+
+/**
+ * @brief Validates the explicit network arguments of the IP audio essence:
+ * destination and UDP port, and the SPS destination and port, which go
+ * together.
+ *
+ * @param videomaster_data    Command-line options.
+ * @param videomaster_context VideoMaster context, for logging.
+ * @return 0 if the arguments are valid, AVERROR(EINVAL) otherwise.
+ */
+static int
+validate_audio_network_arguments(VideoMasterData    *videomaster_data,
+                                 VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Joins multicast groups for a single media entry (SDP mode).
+ *
+ * For multicast destinations only. Applies SSM source filtering when the
+ * SDP source-filter attribute is present.
+ *
+ * @param videomaster_context VideoMaster context.
+ * @param media               SDP media entry to join.
+ * @param eth_port            Ethernet port to join the group on.
+ * @return 0 on success, negative AVERROR code on failure.
+ */
+static int
+join_multicast_group_sdp_entry(VideoMasterContext     *videomaster_context,
+                               const VHD_SDP_MEDIA    *media,
+                               VHD_IP_BRD_ETHERNETPORT eth_port);
+
+/**
+ * @brief Lists the multicast groups joined at start-up, with their port.
+ *
+ * Must match ff_videomaster_join_multicast_group() and
+ * join_audio_multicast_groups().
+ *
+ * @param ctx VideoMaster context.
+ * @param out Receives the groups: video main and SPS, audio main and SPS.
+ * @return Number of entries written to out.
+ */
+static int list_multicast_groups(VideoMasterContext *ctx,
+                                 MulticastGroupRef   out[4]);
+
+/**
+ * @brief Tells whether groups[i] already appears before index i.
+ *
+ * Video and audio may share a group, which must be joined or left once.
+ *
+ * @param groups Groups returned by list_multicast_groups().
+ * @param i      Index of the group to check.
+ * @return true if an earlier entry has the same address and port.
+ */
+static bool is_listed_earlier(const MulticastGroupRef *groups, int i);
+
+/**
+ * @brief Leaves then re-joins the multicast groups of one Ethernet port.
+ *
+ * Leave first: joining an already joined group succeeds without sending a
+ * new IGMP report. Best effort, the capture goes on either way.
+ *
+ * @param ctx  VideoMaster context.
+ * @param port Index into ip_eth_ports.
+ */
+static void rejoin_port(VideoMasterContext *ctx, int port);
+
+/**
+ * @brief Finds the Ethernet ports that receive at least one multicast group.
+ *
+ * @param ctx  VideoMaster context.
+ * @param used Receives, per port, whether it has a multicast group.
+ * @return true if at least one port has a multicast group.
+ */
+static bool find_multicast_ports(VideoMasterContext *ctx, bool used[2]);
+
+/**
+ * @brief Reads the link status of the used Ethernet ports.
+ *
+ * @param ctx  VideoMaster context.
+ * @param used Ports to poll.
+ * @param up   Updated with the link status of each polled port; left as is
+ *             for a port that isn't polled or whose status can't be read.
+ */
+static void poll_link_status(VideoMasterContext *ctx, const bool used[2],
+                             bool up[2]);
+
+/**
+ * @brief Sets the IP video buffer packing from the stream bit depth (10-bit:
+ * V210, 8-bit: UYVY), with the matching codec, pixel format and bit rate.
+ *
+ * @param ctx VideoMaster context.
+ * @return 0 on success, negative AVERROR code on failure.
+ */
+static int set_buffer_packing_and_codec(VideoMasterContext *ctx);
+
+/**
+ * @brief Gets one essence's sub-slot and buffer from a locked sync slot.
+ *
+ * @param ctx           VideoMaster context, for logging.
+ * @param sync_slot     Locked StreamSync slot.
+ * @param stream_handle Stream handle of the essence.
+ * @param buffer_type   Buffer type of the essence.
+ * @param essence       Essence name, for logging.
+ * @param buf           Receives the buffer, or NULL.
+ * @param size          Receives the buffer size, or 0.
+ * @return The sub-slot, or NULL when the sync slot has no data for the
+ *         essence.
+ */
+static void *get_sync_sub_slot(VideoMasterContext *ctx, void *sync_slot,
+                               HANDLE stream_handle, ULONG buffer_type,
+                               const char *essence, uint8_t **buf,
+                               uint32_t *size);
+
+/**
+ * @brief Locks the next StreamSync slot and gets its video and audio buffers.
+ *
+ * The sub-slot used for timestamps is stored in ctx->slot_handle: the video
+ * one, or the audio one when the slot has no video.
+ *
+ * @param ctx            VideoMaster context.
+ * @param video_buf      Receives the video buffer, or NULL.
+ * @param video_size     Receives the video buffer size, or 0.
+ * @param audio_buf      Receives the audio buffer, or NULL.
+ * @param audio_size     Receives the audio buffer size, or 0.
+ * @param slot_to_unlock Receives the sync slot, to unlock once consumed.
+ * @return 0 on success, AVERROR(EAGAIN) when the slot has neither essence,
+ *         negative AVERROR code on failure.
+ */
+static int lock_next_sync_slot_ip(VideoMasterContext *ctx, uint8_t **video_buf,
+                                  uint32_t *video_size, uint8_t **audio_buf,
+                                  uint32_t *audio_size, void **slot_to_unlock);
+
+/**
+ * @brief Tells whether ff_videomaster_stop_ip_audio_thread() asked the audio
+ * capture thread to stop, through the queue's abort.
+ *
+ * @param ctx VideoMaster context.
+ * @return Nonzero if a stop was requested.
+ */
+static int ip_audio_thread_stop_requested(VideoMasterContext *ctx);
+
+/**
+ * @brief Body of the IP audio capture thread (non-sync mode, both essences).
+ *
+ * Locks IP audio slots at their own pace, decoupled from the video cadence of
+ * read_packet(), and pushes one timestamped packet per slot to
+ * ctx->ip_audio_queue. A stop request is only honored while no slot is
+ * locked, so the audio stream can be stopped safely once joined.
+ *
+ * @param arg The VideoMaster context.
+ * @return NULL.
+ */
+static void *ip_audio_capture_thread(void *arg);
+
+/**
+ * @brief Joins the audio essence's multicast groups (main and SPS), applying
+ * the SSM source filter from the SDP file when there is one.
+ *
+ * @param ctx VideoMaster context.
+ * @return 0 on success, negative AVERROR code on failure.
+ */
+static int join_audio_multicast_groups(VideoMasterContext *ctx);
+
+/* ---- Private helpers ---- */
+
 static int parse_ipv4_address(const char *ip_string, uint32_t *out_address)
 {
     unsigned int a = 0, b = 0, c = 0, d = 0;
@@ -79,26 +316,11 @@ static int parse_ipv4_address(const char *ip_string, uint32_t *out_address)
     return 0;
 }
 
-/**
- * @brief Returns true when addr falls within the IPv4 multicast range
- *        (224.0.0.0/4 — first octet in [224, 239]).
- *
- * @param ipv4_addr Host-byte-order 32-bit IPv4 address.
- */
 static bool ip_is_multicast(uint32_t ipv4_addr)
 {
     return (ipv4_addr >> 24) >= 224 && (ipv4_addr >> 24) <= 239;
 }
 
-/**
- * @brief   Validates the arguments for an IP/ST2110 stream (video side).
- * Returns AVERROR(EINVAL) if any argument is invalid.
- *
- * @param videomaster_data    IP/ST2110 stream data structure.
- * @param videomaster_context IP/ST2110 stream context.
- * @return int               0 if arguments are valid, AVERROR(EINVAL)
- * otherwise.
- */
 static int validate_video_arguments(VideoMasterData    *videomaster_data,
                                     VideoMasterContext *videomaster_context)
 {
@@ -136,15 +358,6 @@ static int validate_video_arguments(VideoMasterData    *videomaster_data,
     return 0;
 }
 
-/**
- * @brief   Validates the arguments for an IP/ST2110 stream (network side).
- * Returns AVERROR(EINVAL) if any argument is invalid.
- *
- * @param videomaster_data    IP/ST2110 stream data structure.
- * @param videomaster_context IP/ST2110 stream context.
- * @return int               0 if arguments are valid, AVERROR(EINVAL)
- * otherwise.
- */
 static int validate_network_arguments(VideoMasterData    *videomaster_data,
                                       VideoMasterContext *videomaster_context)
 {
@@ -190,21 +403,6 @@ static int validate_network_arguments(VideoMasterData    *videomaster_data,
     return 0;
 }
 
-/**
- * @brief Searches the ST2110-20 video standard table for an entry that
- *        matches the explicit resolution, framerate and interlacing stored
- *        in the context.
- *
- * The match is done by calling VHD_ST2110_20_GetVideoCharacteristics for
- * every known standard and comparing with the user-supplied parameters.
- * The framerate is compared as a rational: "25/1" and "25000/1000" match the
- * same standard, and "30000/1001" matches the 29.97 one.
- *
- * @param videomaster_context Context carrying the explicit video
- * parameters.
- * @param video_standard      Output: matched ST2110-20 video standard.
- * @return 0 on success, AVERROR(EINVAL) if no standard matches.
- */
 static int get_st2110_video_standard_from_explicit(
     VideoMasterContext           *videomaster_context,
     VHD_ST2110_20_VIDEO_STANDARD *video_standard)
@@ -242,17 +440,6 @@ static int get_st2110_video_standard_from_explicit(
 
 /* ---- SDP helpers ---- */
 
-/**
- * @brief Extracts the IPv4 address from a VHD_SDP_IP_ADDRESS.
- *
- * Returns the raw AddressV4 field, which the SDK stores in the same byte
- * order as the board C API expects (matching the reference project convention
- * in videomaster-video-monitor). TODO: verify byte order on hardware if
- * multicast join/leave behaves unexpectedly.
- *
- * Only IPv4 is supported. The caller must validate the Version field before
- * calling this function.
- */
 static uint32_t sdp_ip_to_uint32(const VHD_SDP_IP_ADDRESS *addr)
 {
     return addr->AddressV4;
@@ -659,12 +846,6 @@ uint32_t ff_videomaster_get_video_buffer_type_ip()
 
 /* ---- Stream setup functions ---- */
 
-/**
- * @brief Joins multicast groups for a single media entry (SDP mode).
- *
- * For multicast destinations only. Applies SSM source filtering when the
- * SDP source-filter attribute is present.
- */
 static int
 join_multicast_group_sdp_entry(VideoMasterContext     *videomaster_context,
                                const VHD_SDP_MEDIA    *media,
@@ -827,15 +1008,6 @@ static const VHD_IP_BRD_ETHERNETPORT ip_eth_ports[2] = {
     VHD_IP_BRD_ETHERNETPORT_ETH_1,
 };
 
-typedef struct MulticastGroupRef
-{
-    uint32_t             addr;
-    const VHD_SDP_MEDIA *sdp_media;  ///< NULL in explicit mode
-    int                  port;       ///< index into ip_eth_ports
-} MulticastGroupRef;
-
-/* The groups joined at start-up, with their port: must match
- * ff_videomaster_join_multicast_group() and join_audio_multicast_groups(). */
 static int list_multicast_groups(VideoMasterContext *ctx,
                                  MulticastGroupRef   out[4])
 {
@@ -882,7 +1054,6 @@ static int list_multicast_groups(VideoMasterContext *ctx,
     return n;
 }
 
-/* Video and audio may share a group, which must be joined or left once. */
 static bool is_listed_earlier(const MulticastGroupRef *groups, int i)
 {
     for (int j = 0; j < i; j++)
@@ -920,8 +1091,6 @@ int ff_videomaster_leave_multicast_group(VideoMasterContext *ctx)
     return ret;
 }
 
-/* Leave first: joining an already joined group succeeds without sending a
- * new IGMP report. Best effort, the capture goes on either way. */
 static void rejoin_port(VideoMasterContext *ctx, int port)
 {
     MulticastGroupRef groups[4];
@@ -1352,8 +1521,6 @@ int ff_videomaster_start_stream_ip(VideoMasterContext *videomaster_context)
     return 0;
 }
 
-/* Returns the essence's sub-slot and buffer, or NULL when the sync slot
- * has no data for it. */
 static void *get_sync_sub_slot(VideoMasterContext *ctx, void *sync_slot,
                                HANDLE stream_handle, ULONG buffer_type,
                                const char *essence, uint8_t **buf,
@@ -1482,7 +1649,6 @@ int ff_videomaster_unlock_slot_ip(VideoMasterContext *ctx, void *slot)
 /* A few seconds' worth of typical ST2110-30 traffic. */
 #define VIDEOMASTER_IP_AUDIO_QUEUE_MAX_BYTES (4 * 1024 * 1024)
 
-/* Set by ff_videomaster_stop_ip_audio_thread() through the queue's abort. */
 static int ip_audio_thread_stop_requested(VideoMasterContext *ctx)
 {
     int requested;
@@ -1492,10 +1658,6 @@ static int ip_audio_thread_stop_requested(VideoMasterContext *ctx)
     return requested;
 }
 
-/* Locks IP audio slots at their own pace, decoupled from the video cadence of
- * read_packet(), and pushes one timestamped packet per slot to
- * ctx->ip_audio_queue. A stop request is only honored while no slot is
- * locked, so the audio stream can be stopped safely once joined. */
 static void *ip_audio_capture_thread(void *arg)
 {
     VideoMasterContext *ctx = (VideoMasterContext *)arg;
@@ -1717,8 +1879,6 @@ int ff_videomaster_parse_audio_sdp_file(VideoMasterData    *videomaster_data,
     return 0;
 }
 
-static int join_audio_multicast_groups(VideoMasterContext *ctx);
-
 int ff_videomaster_open_stream_ip(VideoMasterContext *ctx)
 {
     int ret;
@@ -1766,7 +1926,6 @@ int ff_videomaster_open_video_stream_ip(VideoMasterContext *ctx)
     return 0;
 }
 
-/* Applies the SSM source filter from the SDP file when there is one. */
 static int join_audio_multicast_groups(VideoMasterContext *ctx)
 {
     int av_error = 0;

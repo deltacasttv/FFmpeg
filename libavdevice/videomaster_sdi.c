@@ -57,6 +57,44 @@ extern int ff_videomaster_get_audio_stream_properties(
 extern VHD_STREAMTYPE
 ff_videomaster_get_rx_stream_type_from_index(uint32_t index);
 
+/** static functions declaration **/
+
+/**
+ * @brief Gets the board property holding the clock divisor of an SDI RX
+ * channel.
+ *
+ * @param index  RX channel index
+ * @return int the VHD_SDI_BP_RXx_CLOCK_DIV property, or -1 for an index
+ * without one
+ */
+static int get_rx_sdi_board_property_clock_divisor_from_index(uint32_t index);
+
+/**
+ * @brief Interleaves the extracted SDI audio channel buffers into one
+ * allocated buffer of nb_channels interleaved samples.
+ *
+ * @param videomaster_context  VideoMasterContext pointer to the
+ * VideoMasterContext
+ * @param audio_info  Audio info filled by VHD_SlotExtractAudio
+ * @param audio_buffer  Receives the allocated interleaved buffer
+ * @param audio_buffer_size  Receives its size in bytes
+ * @return int 0 on success, negative AVERROR code on failure
+ */
+static int interleaved_audio_info_to_audio_buffer_sdi(
+    VideoMasterContext *videomaster_context, VHD_AUDIOINFO *audio_info,
+    uint8_t **audio_buffer, uint32_t *audio_buffer_size);
+
+/**
+ * @brief Restores the DataSize of each allocated audio channel buffer to its
+ * capacity: VHD_SlotExtractAudio reads it as the capacity, then overwrites it
+ * with the received size.
+ *
+ * @param videomaster_context  VideoMasterContext pointer to the
+ * VideoMasterContext
+ */
+static void
+restore_audio_buffer_capacity_sdi(VideoMasterContext *videomaster_context);
+
 static int get_rx_sdi_board_property_clock_divisor_from_index(uint32_t index)
 {
     switch (index)

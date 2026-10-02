@@ -392,6 +392,60 @@ static int unlock_slot(VideoMasterContext *videomaster_context);
 static int release_audio_info(VideoMasterContext *videomaster_context,
                               VHD_AUDIOINFO      *audio_info);
 
+/**
+ * @brief Configures how interlaced video is delivered: merged fields when the
+ * board can merge them, otherwise frame mode, with the fields reordered at
+ * packet time on IP channels (video_needs_field_reorder).
+ *
+ * @param videomaster_context  VideoMasterContext pointer to the
+ * VideoMasterContext
+ * @return int 0 on success, negative AVERROR code on failure
+ */
+static int setup_field_merge(VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Sets the slaved transfer scheme on the video stream and, in IP sync
+ * mode, on the audio stream: a StreamSync requires it on every member stream.
+ *
+ * @param videomaster_context  VideoMasterContext pointer to the
+ * VideoMasterContext
+ * @return int 0 (failures are logged only)
+ */
+static int setup_transfer_scheme(VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Selects and sets the video buffer packing, and the matching codec,
+ * pixel format and bit rate.
+ *
+ * Without the buffer_packing option: YUV422 10-bit, or on HDMI the packing
+ * matching the cable bit sampling; YUV422 8-bit when the board refuses the
+ * line padding a 10-bit packing needs.
+ *
+ * @param videomaster_context  VideoMasterContext pointer to the
+ * VideoMasterContext
+ * @return int 0 on success, AVERROR(EINVAL) for an unsupported or
+ * unusable buffer packing
+ */
+static int setup_buffer_packing(VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Applies the board settings the timestamp sources need: the
+ * board-wide system time clock type for osc/system, and Blackburst detection
+ * disabled for the on-board LTC.
+ *
+ * @param videomaster_context  VideoMasterContext pointer to the
+ * VideoMasterContext
+ * @return int 0 on success, negative AVERROR code on failure
+ */
+static int setup_timestamp_source(VideoMasterContext *videomaster_context);
+
+/**
+ * @brief Drops every packet left in the queue.
+ *
+ * @param q  Packet queue to flush
+ */
+static void videomaster_packet_queue_flush(VideoMasterPacketQueue *q);
+
 /** static functions definitions **/
 static int add_device_info_into_list(VideoMasterContext *videomaster_context,
                                      char *board_name, char *serial_number,

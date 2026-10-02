@@ -238,6 +238,8 @@ third-party APIs), not as authority for FFmpeg-internal policy.
   short and only say what the code can't: a non-obvious reason, a hidden
   constraint, a workaround. No narration, investigation history, dates or test
   references.
+- Every static function has a prototype at the top of its file, documented
+  with a Doxygen block. No static function without one.
 
 ### Naming and Symbol Scope
 
