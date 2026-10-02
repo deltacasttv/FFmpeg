@@ -1384,6 +1384,18 @@ int ff_videomaster_read_header(AVFormatContext *avctx)
                                    status);
     }
 
+    /* After setup_streams: the thread needs ctx->audio_stream. */
+    if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_IP_2110 &&
+        !videomaster_context->ip_sync_mode && videomaster_context->has_video &&
+        videomaster_context->has_audio &&
+        (status = ff_videomaster_start_ip_audio_thread(videomaster_context)) !=
+            0)
+    {
+        return handle_stream_error(videomaster_context,
+                                   "Failed to start IP audio capture thread\n",
+                                   status);
+    }
+
     videomaster_context->last_data_time = av_gettime_relative();
     if (videomaster_context->channel_type == AV_VIDEOMASTER_CHANNEL_IP_2110)
         ff_videomaster_ip_link_watch_init(videomaster_context,

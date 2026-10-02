@@ -2415,10 +2415,9 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
                       "Stream started successfully", "Failed to start stream");
 
         /* Non-sync mode with both essences: video and audio are two
-         * independent streams, so audio needs its own VHD_StartStream and
-         * its own capture thread — a thread that pulls audio slots at its
-         * own pace, decoupled from however often read_packet() is called
-         * for video (see ff_videomaster_start_ip_audio_thread()). */
+         * independent streams, so audio needs its own VHD_StartStream. Its
+         * capture thread is started by read_header, once the AVStreams it
+         * fills packets for exist. */
         if (is_ip && !videomaster_context->ip_sync_mode &&
             videomaster_context->has_video && videomaster_context->has_audio)
         {
@@ -2429,11 +2428,6 @@ int ff_videomaster_start_stream(VideoMasterContext *videomaster_context)
                               videomaster_context->ip_audio_stream_handle),
                           "Audio stream started successfully",
                           "Failed to start audio stream");
-
-            av_error = ff_videomaster_start_ip_audio_thread(
-                videomaster_context);
-            if (av_error != 0)
-                return av_error;
         }
     }
 

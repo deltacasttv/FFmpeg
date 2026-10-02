@@ -258,7 +258,8 @@ int ff_videomaster_unlock_slot_ip(VideoMasterContext *ctx, void *slot);
  * independently of however often read_packet() is called for video —
  * building a timestamped AVPacket per slot and pushing it to
  * ctx->ip_audio_queue. Must be called after the audio stream has been
- * started (VHD_StartStream on ip_audio_stream_handle).
+ * started (VHD_StartStream on ip_audio_stream_handle) and after
+ * ctx->audio_stream has been created.
  *
  * @param ctx The VideoMaster context to use.
  * @return 0 on success, negative AVERROR code on failure.
