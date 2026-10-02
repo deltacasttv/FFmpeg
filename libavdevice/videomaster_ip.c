@@ -1611,11 +1611,19 @@ int ff_videomaster_lock_next_slot_ip(VideoMasterContext *ctx,
                   VHD_LockSlotHandle(ctx->ip_audio_stream_handle,
                                      &ctx->ip_audio_slot_handle),
                   "Audio slot locked", "Failed to lock audio slot");
-    GET_AND_CHECK(ff_videomaster_handle_vhd_status, ctx->avctx, ctx->avctx,
-                  VHD_GetSlotBuffer(ctx->ip_audio_slot_handle,
-                                    VHD_ST2110_BT_AUDIO, (BYTE **)audio_buf,
-                                    audio_size),
-                  "", "Failed to get audio buffer");
+    if (ff_videomaster_handle_vhd_status(
+            ctx->avctx,
+            VHD_GetSlotBuffer(ctx->ip_audio_slot_handle, VHD_ST2110_BT_AUDIO,
+                              (BYTE **)audio_buf, audio_size),
+            "", "Failed to get audio buffer") != 0)
+    {
+        /* Skip the slot: a slot left locked is lost for the SDK queue. */
+        VHD_UnlockSlotHandle(ctx->ip_audio_slot_handle);
+        ctx->ip_audio_slot_handle = NULL;
+        *audio_buf = NULL;
+        *audio_size = 0;
+        return AVERROR(EAGAIN);
+    }
     *slot_to_unlock = ctx->ip_audio_slot_handle;
     return 0;
 }
