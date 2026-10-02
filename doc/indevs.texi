@@ -1543,10 +1543,10 @@ Selects the source for video frame timestamps (and, for SDI/HDMI, the single sha
 Set the number of audio channels to capture. This option is only used when the input source is an SDI stream. For HDMI streams, the number of channels is automatically detected from the stream properties. Supported values are 1 to 16. SDI audio is only captured when @option{nb_channels}, @option{sample_rate} and @option{sample_size} are all set; otherwise a warning is displayed and the audio is ignored.
 
 @item sample_size
-Set the audio sample size in bits to capture. This option is only used when the input source is an SDI stream. For HDMI streams, the sample size is automatically detected from the stream properties. Supported values are 16 and 24. If not specified, a warning is displayed and the sample size detected on the signal is used.
+Set the audio sample size in bits to capture. This option is only used when the input source is an SDI stream. For HDMI streams, the sample size is automatically detected from the stream properties. Supported values are 16 and 24. If not specified, a warning is displayed and the SDI audio is ignored.
 
 @item sample_rate
-Set the audio sample rate in Hz to capture. This option is only used when the input source is an SDI stream. For HDMI streams, the sample rate is automatically detected from the stream properties. Supported values are 32000, 44100, and 48000. If not specified, a warning is displayed and the sample rate detected on the signal is used.
+Set the audio sample rate in Hz to capture. This option is only used when the input source is an SDI stream. For HDMI streams, the sample rate is automatically detected from the stream properties. Supported values are 32000, 44100, and 48000. If not specified, a warning is displayed and the SDI audio is ignored.
 
 @item buffer_packing
 Specifies the buffer packing format and whether to enable the FPGA's color space converter on the board. If not set, the default buffer packing is YUV422 10-bit when the Line Padding property can be enabled, or YUV422 8-bit otherwise.
