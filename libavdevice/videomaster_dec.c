@@ -437,8 +437,6 @@ static int check_header_arguments(VideoMasterData    *videomaster_data,
     {
         av_log(videomaster_context->avctx, AV_LOG_ERROR,
                "Failed to check timestamp source integrity\n");
-        ff_videomaster_close_stream_handle(videomaster_context);
-        ff_videomaster_close_board_handle(videomaster_context);
         return status;
     }
 
