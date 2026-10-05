@@ -1526,6 +1526,32 @@ The stream input name is generally in the form @code{stream <channel_index> on b
 
 @end itemize
 
+@subsection Colorimetry
+
+The video stream is tagged with its color primaries, transfer characteristics,
+matrix coefficients and range. The range is always limited.
+
+On SDI channels, the colorimetry (BT.709 or BT.2020) and the transfer
+characteristics (SDR, HLG or PQ) come from the SMPTE ST 352 payload identifier
+of the input, when the board reports it. BT.2020 is tagged with non-constant
+luminance matrix coefficients, or ICtCp ones when the payload identifier
+signals an ICtCp signal packing. libswscale can't convert ICtCp: filter graphs
+that need a conversion, @command{ffplay} among them, fail on such an input.
+@code{-vf setparams=colorspace=bt2020nc} lets them run, with wrong colors.
+
+Otherwise, the colorimetry is derived from the picture height:
+@table @asis
+@item 720 lines and more
+BT.709.
+@item 576 lines (625-line SD)
+BT.470BG primaries and matrix coefficients, SMPTE 170M transfer
+characteristics.
+@item Other SD (525-line SD)
+SMPTE 170M primaries, matrix coefficients and transfer characteristics.
+@end table
+
+A UHD signal without payload identifier is therefore tagged BT.709.
+
 @subsection Options
 
 @table @option

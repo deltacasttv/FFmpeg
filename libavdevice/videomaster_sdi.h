@@ -143,6 +143,18 @@ int ff_videomaster_get_video_stream_properties_sdi(
     uint32_t *frame_rate_den, bool *interlaced, bool dual_stream);
 
 /**
+ * @brief Tags the video colorimetry from the ST 352 payload ID.
+ *
+ * Leaves codecpar untouched when the board doesn't report it: SD
+ * interfaces, boards without HDR signaling support, unlocked input.
+ *
+ * @param videomaster_context The VideoMaster context, with an opened stream.
+ * @param codecpar Codec parameters of the video stream.
+ */
+void ff_videomaster_set_video_color_properties_sdi(
+    VideoMasterContext *videomaster_context, AVCodecParameters *codecpar);
+
+/**
  * @brief Fills buf with an enriched description for a locked SDI/ASI channel.
  *
  * Uses properties already stored in videomaster_context (resolution,

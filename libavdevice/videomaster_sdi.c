@@ -558,6 +558,80 @@ uint32_t ff_videomaster_get_video_buffer_type_sdi(void)
     return VHD_SDI_BT_VIDEO;
 }
 
+void ff_videomaster_set_video_color_properties_sdi(
+    VideoMasterContext *videomaster_context, AVCodecParameters *codecpar)
+{
+    ULONG colorimetry = NB_VHD_SDI_COLORIMETRY;
+    ULONG transfer = NB_VHD_SDI_TRANSFER_CHARACTERISTICS;
+    ULONG packing = NB_VHD_SDI_SIGNAL_PACKING;
+    ULONG status;
+
+    status = VHD_GetStreamProperty(videomaster_context->stream_handle,
+                                   VHD_SDI_SP_COLORIMETRY, &colorimetry);
+    if (status == VHDERR_NOERROR)
+        status = VHD_GetStreamProperty(videomaster_context->stream_handle,
+                                       VHD_SDI_SP_TRANSFER_CHARACTERISTICS,
+                                       &transfer);
+    if (status != VHDERR_NOERROR)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "No ST 352 colorimetry (%s), using the picture height\n",
+               VHD_ERRORCODE_ToPrettyString((VHD_ERRORCODE)status));
+        return;
+    }
+    if (colorimetry >= NB_VHD_SDI_COLORIMETRY)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "No ST 352 colorimetry (not signaled), using the picture "
+               "height\n");
+        return;
+    }
+    /* On failure, packing stays unknown and the Y'CbCr matrix is kept. */
+    VHD_GetStreamProperty(videomaster_context->stream_handle,
+                          VHD_SDI_SP_SIGNAL_PACKING, &packing);
+
+    av_log(videomaster_context->avctx, AV_LOG_TRACE,
+           "ST 352 colorimetry: %s, transfer characteristics: %s, signal "
+           "packing: %s\n",
+           VHD_SDI_COLORIMETRY_ToPrettyString((VHD_SDI_COLORIMETRY)colorimetry),
+           VHD_SDI_TRANSFER_CHARACTERISTICS_ToPrettyString(
+               (VHD_SDI_TRANSFER_CHARACTERISTICS)transfer),
+           VHD_SDI_SIGNALPACKING_ToPrettyString(
+               (VHD_SDI_SIGNALPACKING)packing));
+
+    if (colorimetry == VHD_SDI_COLORIMETRY_UHDTV)
+    {
+        codecpar->color_primaries = AVCOL_PRI_BT2020;
+        codecpar->color_trc = AVCOL_TRC_BT2020_10;
+        codecpar->color_space = AVCOL_SPC_BT2020_NCL;
+    }
+    else
+    {
+        codecpar->color_primaries = AVCOL_PRI_BT709;
+        codecpar->color_trc = AVCOL_TRC_BT709;
+        codecpar->color_space = AVCOL_SPC_BT709;
+    }
+
+    switch (transfer)
+    {
+    case VHD_SDI_TC_HLG:
+        codecpar->color_trc = AVCOL_TRC_ARIB_STD_B67;
+        break;
+    case VHD_SDI_TC_PQ:
+        codecpar->color_trc = AVCOL_TRC_SMPTE2084;
+        break;
+    }
+
+    if (packing == VHD_SDI_SIGNALPACKING_ICTCP_422_10)
+    {
+        codecpar->color_space = AVCOL_SPC_ICTCP;
+        av_log(videomaster_context->avctx, AV_LOG_WARNING,
+               "ICtCp input: libswscale can't convert it. To process it "
+               "anyway (with wrong colors), use "
+               "-vf setparams=colorspace=bt2020nc\n");
+    }
+}
+
 int ff_videomaster_get_video_stream_properties_sdi(
     AVFormatContext *avctx, HANDLE board_handle, HANDLE stream_handle,
     uint32_t channel_index, union VideoMasterVideoInfo *video_info,

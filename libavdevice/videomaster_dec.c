@@ -1208,6 +1208,16 @@ static int setup_video_stream(VideoMasterContext *videomaster_context)
 
         set_video_color_properties(av_stream->codecpar,
                                    videomaster_context->video_height);
+        switch (videomaster_context->channel_type)
+        {
+        case AV_VIDEOMASTER_CHANNEL_SDI:
+        case AV_VIDEOMASTER_CHANNEL_ASISDI:
+            ff_videomaster_set_video_color_properties_sdi(videomaster_context,
+                                                          av_stream->codecpar);
+            break;
+        default:
+            break;
+        }
 
         avpriv_set_pts_info(av_stream, 64, 1, 1000000); /* 64 bits pts in us */
 
