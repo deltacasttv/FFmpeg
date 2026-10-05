@@ -275,6 +275,19 @@ int ff_videomaster_start_ip_audio_thread(VideoMasterContext *ctx);
  */
 void ff_videomaster_stop_ip_audio_thread(VideoMasterContext *ctx);
 
+/**
+ * @brief Tags the video colorimetry from the colorimetry and TCS parameters
+ * of the video SDP file.
+ *
+ * Leaves codecpar untouched with an explicit configuration, and for the
+ * values that have no FFmpeg equivalent.
+ *
+ * @param videomaster_context The VideoMaster context.
+ * @param codecpar Codec parameters of the video stream.
+ */
+void ff_videomaster_set_video_color_properties_ip(
+    VideoMasterContext *videomaster_context, AVCodecParameters *codecpar);
+
 /* ---- IP network parameter helpers ---- */
 
 /** Input fields from VideoMasterData for one IP essence (video or audio). */

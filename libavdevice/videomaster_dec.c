@@ -1221,6 +1221,10 @@ static int setup_video_stream(VideoMasterContext *videomaster_context)
             ff_videomaster_set_video_color_properties_hdmi(videomaster_context,
                                                            av_stream->codecpar);
             break;
+        case AV_VIDEOMASTER_CHANNEL_IP_2110:
+            ff_videomaster_set_video_color_properties_ip(videomaster_context,
+                                                         av_stream->codecpar);
+            break;
         default:
             break;
         }

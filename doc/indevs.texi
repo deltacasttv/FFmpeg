@@ -1550,6 +1550,13 @@ coefficients the board uses: BT.709 from 1280 pixels wide, BT.601 below.
 Other color spaces (xvYCC, sYCC, Adobe, DCI-P3, full-range YCbCr, BT.2020
 constant luminance) can't be converted by the board and are not mapped.
 
+On IP channels configured from an SDP file, the colorimetry comes from the
+@code{colorimetry} parameter (BT.601, BT.709, BT.2020 or BT.2100), and the
+transfer characteristics from the @code{TCS} parameter (SDR, PQ, HLG, linear or
+SMPTE ST 428-1). The range is always limited, and ICtCp is not detected. An
+explicit configuration (@code{ip_video_*} options) has no colorimetry
+information.
+
 Otherwise, the colorimetry is derived from the picture height:
 @table @asis
 @item 720 lines and more
