@@ -28,6 +28,7 @@
 #include "libavutil/log.h"
 #include "libavutil/mathematics.h"
 #include "libavutil/mem.h"
+#include "libavutil/pixdesc.h"
 #include "videomaster_internal.h"
 
 #if defined(__APPLE__)
@@ -37,6 +38,10 @@
 #include <VideoMasterHD_Core.h>
 #include <VideoMasterHD_String.h>
 #endif
+
+/* EOTF codes of the CTA-861 Dynamic Range and Mastering InfoFrame. */
+#define CTA861_EOTF_SMPTE_ST2084 2
+#define CTA861_EOTF_HLG          3
 
 /** static functions declaration **/
 
@@ -329,6 +334,84 @@ ff_videomaster_get_buffer_packing_from_cable_bit_sampling_hdmi(
         return AV_VIDEOMASTER_BUFFER_PACKING_PLANAR_P010;
     default:
         return AV_VIDEOMASTER_BUFFER_PACKING_YUV422_10;
+    }
+}
+
+void ff_videomaster_set_video_color_properties_hdmi(
+    VideoMasterContext *videomaster_context, AVCodecParameters *codecpar)
+{
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(
+        videomaster_context->video_pixel_format);
+    VHD_DV_CS color_space = videomaster_context->video_info.hdmi.color_space;
+    VHD_DV_HDMI_HDR_INFOFRAME hdr_info = { 0 };
+    bool                      limited_rgb_cable = false;
+    ULONG                     status;
+
+    switch (color_space)
+    {
+    case VHD_DV_CS_RGB_LIMITED:
+        limited_rgb_cable = true;
+        /* fall through */
+    case VHD_DV_CS_RGB_FULL:
+        /* The board converts RGB with BT.709 from 1280 pixels wide. */
+        codecpar->color_space = videomaster_context->video_width >= 1280
+                                    ? AVCOL_SPC_BT709
+                                    : AVCOL_SPC_SMPTE170M;
+        break;
+    case VHD_DV_CS_YUV601:
+        codecpar->color_space = AVCOL_SPC_SMPTE170M;
+        break;
+    case VHD_DV_CS_YUV709:
+        codecpar->color_primaries = AVCOL_PRI_BT709;
+        codecpar->color_trc = AVCOL_TRC_BT709;
+        codecpar->color_space = AVCOL_SPC_BT709;
+        break;
+    case VHD_DV_CS_BT2020_RGB_LIMITED:
+        limited_rgb_cable = true;
+        /* fall through */
+    case VHD_DV_CS_BT2020_RGB_FULL:
+    case VHD_DV_CS_BT2020_YCBCR:
+        codecpar->color_primaries = AVCOL_PRI_BT2020;
+        codecpar->color_trc = AVCOL_TRC_BT2020_10;
+        codecpar->color_space = AVCOL_SPC_BT2020_NCL;
+        break;
+    default:
+        /* The board can't convert these, so the buffer content is unknown. */
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "HDMI color space %s not mapped, using the picture height\n",
+               VHD_DV_CS_ToPrettyString(color_space));
+        break;
+    }
+
+    if (desc && desc->flags & AV_PIX_FMT_FLAG_RGB)
+    {
+        /* An RGB cable goes through unconverted, YUV is converted to full
+         * range. */
+        codecpar->color_space = AVCOL_SPC_RGB;
+        codecpar->color_range = limited_rgb_cable ? AVCOL_RANGE_MPEG
+                                                  : AVCOL_RANGE_JPEG;
+    }
+
+    status = VHD_GetStreamHDMIHDRInfo(videomaster_context->stream_handle,
+                                      &hdr_info);
+    if (status != VHDERR_NOERROR)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "No HDR InfoFrame (%s)\n",
+               VHD_ERRORCODE_ToPrettyString((VHD_ERRORCODE)status));
+        return;
+    }
+
+    av_log(videomaster_context->avctx, AV_LOG_TRACE, "HDR InfoFrame EOTF: %u\n",
+           hdr_info.EOTF);
+    switch (hdr_info.EOTF)
+    {
+    case CTA861_EOTF_SMPTE_ST2084:
+        codecpar->color_trc = AVCOL_TRC_SMPTE2084;
+        break;
+    case CTA861_EOTF_HLG:
+        codecpar->color_trc = AVCOL_TRC_ARIB_STD_B67;
+        break;
     }
 }
 

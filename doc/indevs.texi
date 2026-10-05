@@ -1526,6 +1526,50 @@ The stream input name is generally in the form @code{stream <channel_index> on b
 
 @end itemize
 
+@subsection Colorimetry
+
+The video stream is tagged with its color primaries, transfer characteristics,
+matrix coefficients and range. The range is limited, except with an RGB
+@code{buffer_packing}: the board then converts the video to full-range RGB, and
+the stream is tagged as such. On HDMI, an RGB input captured with an RGB
+@code{buffer_packing} is not converted and keeps its own range.
+
+On SDI channels, the colorimetry (BT.709 or BT.2020) and the transfer
+characteristics (SDR, HLG or PQ) come from the SMPTE ST 352 payload identifier
+of the input, when the board reports it. BT.2020 is tagged with non-constant
+luminance matrix coefficients, or ICtCp ones when the payload identifier
+signals an ICtCp signal packing. libswscale can't convert ICtCp: filter graphs
+that need a conversion, @command{ffplay} among them, fail on such an input.
+@code{-vf setparams=colorspace=bt2020nc} lets them run, with wrong colors.
+
+On HDMI channels, the colorimetry comes from the color space of the input
+(RGB, YCbCr BT.601 or BT.709, BT.2020 RGB or YCbCr), and the transfer
+characteristics from the EOTF of the HDR InfoFrame (PQ or HLG), when the source
+sends one. An RGB input converted to YCbCr is tagged with the matrix
+coefficients the board uses: BT.709 from 1280 pixels wide, BT.601 below.
+Other color spaces (xvYCC, sYCC, Adobe, DCI-P3, full-range YCbCr, BT.2020
+constant luminance) can't be converted by the board and are not mapped.
+
+On IP channels configured from an SDP file, the colorimetry comes from the
+@code{colorimetry} parameter (BT.601, BT.709, BT.2020 or BT.2100), and the
+transfer characteristics from the @code{TCS} parameter (SDR, PQ, HLG, linear or
+SMPTE ST 428-1). The range is always limited, and ICtCp is not detected. An
+explicit configuration (@code{ip_video_*} options) has no colorimetry
+information.
+
+Otherwise, the colorimetry is derived from the picture height:
+@table @asis
+@item 720 lines and more
+BT.709.
+@item 576 lines (625-line SD)
+BT.470BG primaries and matrix coefficients, SMPTE 170M transfer
+characteristics.
+@item Other SD (525-line SD)
+SMPTE 170M primaries, matrix coefficients and transfer characteristics.
+@end table
+
+A UHD signal without payload identifier is therefore tagged BT.709.
+
 @subsection Options
 
 @table @option
@@ -1549,7 +1593,7 @@ Set the audio sample size in bits to capture. This option is only used when the 
 Set the audio sample rate in Hz to capture. This option is only used when the input source is an SDI stream. For HDMI streams, the sample rate is automatically detected from the stream properties. Supported values are 32000, 44100, and 48000. If not specified, a warning is displayed and the SDI audio is ignored.
 
 @item buffer_packing
-Specifies the buffer packing format and whether to enable the FPGA's color space converter on the board. If not set, the default buffer packing is YUV422 10-bit. On HDMI channels receiving 4:2:0 video, it is planar NV12 (8-bit) or P010 (10-bit) instead. YUV422 10-bit needs the Line Padding property: on boards that don't support it, YUV422 8-bit is used.
+Specifies the buffer packing format and whether to enable the FPGA's color space converter on the board. If not set, the default buffer packing is YUV422 10-bit. On HDMI channels receiving 4:2:0 video, it is planar NV12 (8-bit) or P010 (10-bit) instead. YUV422 10-bit needs the Line Padding property: on boards that don't support it, YUV422 8-bit is used. Opening fails if the board doesn't support the selected buffer packing.
 
 @item dual_stream
 Force the 3G-B dual stream interface when it cannot be auto-detected. A 3G Level B-DS stream received on the RX0 physical connector is split into two independent streams: one RX0 stream receives the A link and one RX1 stream receives the B link. When enabled, FFmpeg expects the two streams to be provided on consecutive channels (RX0 for the A link, RX1 for the B link). This option is only relevant for SDI 3G Level B-DS signals. An error is displayed if the selected board and channel do not support the 3G-B dual stream interface. Accepted values are @option{1} (or @option{true}) to enable dual stream mode, and @option{0} (or @option{false}) to disable it. Default is @option{false}.

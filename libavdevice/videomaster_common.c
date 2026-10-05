@@ -889,6 +889,7 @@ static int setup_buffer_packing(VideoMasterContext *videomaster_context)
 {
     int                                 av_error = 0;
     const VideoMasterBufferPackingInfo *info = NULL;
+    BOOL32                              is_capable = FALSE;
 
     if (videomaster_context->video_buffer_packing ==
         AV_NB_VIDEOMASTER_BUFFER_PACKINGS)
@@ -926,6 +927,20 @@ static int setup_buffer_packing(VideoMasterContext *videomaster_context)
                "Not implemented video buffer packing: %s\n",
                VHD_BUFFERPACKING_ToPrettyString(
                    videomaster_context->video_buffer_packing));
+        return AVERROR(EINVAL);
+    }
+
+    /* Otherwise VHD_StartStream() fails later with a generic error. */
+    if (VHD_GetBoardCapBufferPacking(videomaster_context->board_handle,
+                                     info->buffer_packing,
+                                     &is_capable) == VHDERR_NOERROR &&
+        !is_capable)
+    {
+        av_log(videomaster_context->avctx, AV_LOG_ERROR,
+               "Board %u does not support %s video buffer packing. Leave the "
+               "option unset or select another buffer packing.\n",
+               videomaster_context->board_index,
+               VHD_BUFFERPACKING_ToPrettyString(info->buffer_packing));
         return AVERROR(EINVAL);
     }
 
