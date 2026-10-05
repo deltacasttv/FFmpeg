@@ -1531,7 +1531,8 @@ The stream input name is generally in the form @code{stream <channel_index> on b
 The video stream is tagged with its color primaries, transfer characteristics,
 matrix coefficients and range. The range is limited, except with an RGB
 @code{buffer_packing}: the board then converts the video to full-range RGB, and
-the stream is tagged as such.
+the stream is tagged as such. On HDMI, an RGB input captured with an RGB
+@code{buffer_packing} is not converted and keeps its own range.
 
 On SDI channels, the colorimetry (BT.709 or BT.2020) and the transfer
 characteristics (SDR, HLG or PQ) come from the SMPTE ST 352 payload identifier
@@ -1540,6 +1541,14 @@ luminance matrix coefficients, or ICtCp ones when the payload identifier
 signals an ICtCp signal packing. libswscale can't convert ICtCp: filter graphs
 that need a conversion, @command{ffplay} among them, fail on such an input.
 @code{-vf setparams=colorspace=bt2020nc} lets them run, with wrong colors.
+
+On HDMI channels, the colorimetry comes from the color space of the input
+(RGB, YCbCr BT.601 or BT.709, BT.2020 RGB or YCbCr), and the transfer
+characteristics from the EOTF of the HDR InfoFrame (PQ or HLG), when the source
+sends one. An RGB input converted to YCbCr is tagged with the matrix
+coefficients the board uses: BT.709 from 1280 pixels wide, BT.601 below.
+Other color spaces (xvYCC, sYCC, Adobe, DCI-P3, full-range YCbCr, BT.2020
+constant luminance) can't be converted by the board and are not mapped.
 
 Otherwise, the colorimetry is derived from the picture height:
 @table @asis

@@ -1217,13 +1217,19 @@ static int setup_video_stream(VideoMasterContext *videomaster_context)
             ff_videomaster_set_video_color_properties_sdi(videomaster_context,
                                                           av_stream->codecpar);
             break;
+        case AV_VIDEOMASTER_CHANNEL_HDMI:
+            ff_videomaster_set_video_color_properties_hdmi(videomaster_context,
+                                                           av_stream->codecpar);
+            break;
         default:
             break;
         }
 
-        /* The board converts to full-range RGB for RGB buffer packings. */
+        /* The board converts to full-range RGB for RGB buffer packings.
+         * HDMI depends on the cable and is handled above. */
         desc = av_pix_fmt_desc_get(videomaster_context->video_pixel_format);
-        if (desc && desc->flags & AV_PIX_FMT_FLAG_RGB)
+        if (videomaster_context->channel_type != AV_VIDEOMASTER_CHANNEL_HDMI &&
+            desc && desc->flags & AV_PIX_FMT_FLAG_RGB)
         {
             av_stream->codecpar->color_space = AVCOL_SPC_RGB;
             av_stream->codecpar->color_range = AVCOL_RANGE_JPEG;
