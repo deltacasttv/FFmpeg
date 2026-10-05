@@ -12,6 +12,7 @@
 #include "libavutil/mathematics.h"
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
+#include "libavutil/pixdesc.h"
 #include "libavutil/time.h"
 
 #include "videomaster_common.h"
@@ -1184,6 +1185,7 @@ static int setup_video_stream(VideoMasterContext *videomaster_context)
 {
     if (videomaster_context->has_video)
     {
+        const AVPixFmtDescriptor *desc;
         AVStream *av_stream = avformat_new_stream(videomaster_context->avctx,
                                                   NULL);
         if (!av_stream)
@@ -1217,6 +1219,14 @@ static int setup_video_stream(VideoMasterContext *videomaster_context)
             break;
         default:
             break;
+        }
+
+        /* The board converts to full-range RGB for RGB buffer packings. */
+        desc = av_pix_fmt_desc_get(videomaster_context->video_pixel_format);
+        if (desc && desc->flags & AV_PIX_FMT_FLAG_RGB)
+        {
+            av_stream->codecpar->color_space = AVCOL_SPC_RGB;
+            av_stream->codecpar->color_range = AVCOL_RANGE_JPEG;
         }
 
         avpriv_set_pts_info(av_stream, 64, 1, 1000000); /* 64 bits pts in us */

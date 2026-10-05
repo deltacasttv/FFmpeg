@@ -1529,7 +1529,9 @@ The stream input name is generally in the form @code{stream <channel_index> on b
 @subsection Colorimetry
 
 The video stream is tagged with its color primaries, transfer characteristics,
-matrix coefficients and range. The range is always limited.
+matrix coefficients and range. The range is limited, except with an RGB
+@code{buffer_packing}: the board then converts the video to full-range RGB, and
+the stream is tagged as such.
 
 On SDI channels, the colorimetry (BT.709 or BT.2020) and the transfer
 characteristics (SDR, HLG or PQ) come from the SMPTE ST 352 payload identifier
