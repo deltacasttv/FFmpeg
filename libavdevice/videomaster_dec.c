@@ -12,6 +12,7 @@
 #include "libavutil/mathematics.h"
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
+#include "libavutil/pixdesc.h"
 #include "libavutil/time.h"
 
 #include "videomaster_common.h"
@@ -152,6 +153,18 @@ static int header_error(VideoMasterContext *videomaster_context,
  * @return int  0 on success, or negative AVERROR code on failure
  */
 static int parse_command_line_arguments(AVFormatContext *avctx);
+
+/**
+ * @brief Tags the video stream colorimetry from its picture height
+ *
+ * HD and above is tagged BT.709, 625-line SD BT.601-625 and other SD
+ * BT.601-525. The range is always limited.
+ *
+ * @param codecpar codec parameters of the video stream
+ * @param height   picture height, in lines
+ */
+static void set_video_color_properties(AVCodecParameters *codecpar,
+                                       uint32_t           height);
 
 /**
  * @brief  Sets up the FFmpeg audio stream based on the VideoMaster context
@@ -1104,6 +1117,31 @@ static int parse_command_line_arguments(AVFormatContext *avctx)
     return 0;
 }
 
+static void set_video_color_properties(AVCodecParameters *codecpar,
+                                       uint32_t           height)
+{
+    codecpar->color_range = AVCOL_RANGE_MPEG;
+
+    if (height >= 720)
+    {
+        codecpar->color_primaries = AVCOL_PRI_BT709;
+        codecpar->color_trc = AVCOL_TRC_BT709;
+        codecpar->color_space = AVCOL_SPC_BT709;
+    }
+    else if (height == 576)
+    {
+        codecpar->color_primaries = AVCOL_PRI_BT470BG;
+        codecpar->color_trc = AVCOL_TRC_SMPTE170M;
+        codecpar->color_space = AVCOL_SPC_BT470BG;
+    }
+    else
+    {
+        codecpar->color_primaries = AVCOL_PRI_SMPTE170M;
+        codecpar->color_trc = AVCOL_TRC_SMPTE170M;
+        codecpar->color_space = AVCOL_SPC_SMPTE170M;
+    }
+}
+
 static int setup_audio_stream(VideoMasterContext *videomaster_context)
 {
     if (videomaster_context->has_audio)
@@ -1147,6 +1185,7 @@ static int setup_video_stream(VideoMasterContext *videomaster_context)
 {
     if (videomaster_context->has_video)
     {
+        const AVPixFmtDescriptor *desc;
         AVStream *av_stream = avformat_new_stream(videomaster_context->avctx,
                                                   NULL);
         if (!av_stream)
@@ -1169,25 +1208,35 @@ static int setup_video_stream(VideoMasterContext *videomaster_context)
                                                ? AV_FIELD_TT
                                                : AV_FIELD_PROGRESSIVE;
 
-        /* Broadcast content is always limited (studio swing) range. */
-        av_stream->codecpar->color_range = AVCOL_RANGE_MPEG;
-
-        /*
-         * Derive colour primaries / transfer / matrix from resolution.
-         * HD (height >= 720) uses BT.709; SD uses BT.601.
-         * This matches ITU-R BT.2081 and common broadcast practice.
-         */
-        if (videomaster_context->video_height >= 720)
+        set_video_color_properties(av_stream->codecpar,
+                                   videomaster_context->video_height);
+        switch (videomaster_context->channel_type)
         {
-            av_stream->codecpar->color_primaries = AVCOL_PRI_BT709;
-            av_stream->codecpar->color_trc = AVCOL_TRC_BT709;
-            av_stream->codecpar->color_space = AVCOL_SPC_BT709;
+        case AV_VIDEOMASTER_CHANNEL_SDI:
+        case AV_VIDEOMASTER_CHANNEL_ASISDI:
+            ff_videomaster_set_video_color_properties_sdi(videomaster_context,
+                                                          av_stream->codecpar);
+            break;
+        case AV_VIDEOMASTER_CHANNEL_HDMI:
+            ff_videomaster_set_video_color_properties_hdmi(videomaster_context,
+                                                           av_stream->codecpar);
+            break;
+        case AV_VIDEOMASTER_CHANNEL_IP_2110:
+            ff_videomaster_set_video_color_properties_ip(videomaster_context,
+                                                         av_stream->codecpar);
+            break;
+        default:
+            break;
         }
-        else
+
+        /* The board converts to full-range RGB for RGB buffer packings.
+         * HDMI depends on the cable and is handled above. */
+        desc = av_pix_fmt_desc_get(videomaster_context->video_pixel_format);
+        if (videomaster_context->channel_type != AV_VIDEOMASTER_CHANNEL_HDMI &&
+            desc && desc->flags & AV_PIX_FMT_FLAG_RGB)
         {
-            av_stream->codecpar->color_primaries = AVCOL_PRI_BT470BG;
-            av_stream->codecpar->color_trc = AVCOL_TRC_BT709;
-            av_stream->codecpar->color_space = AVCOL_SPC_BT470BG;
+            av_stream->codecpar->color_space = AVCOL_SPC_RGB;
+            av_stream->codecpar->color_range = AVCOL_RANGE_JPEG;
         }
 
         avpriv_set_pts_info(av_stream, 64, 1, 1000000); /* 64 bits pts in us */

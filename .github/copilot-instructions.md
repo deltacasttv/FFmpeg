@@ -164,6 +164,7 @@ must fail cleanly (no crash or hang) with the expected error code and message.
 | T4 | `timestamp_source rtp` | `EINVAL`, "only available for IP channels" |
 | T5 | `dual_stream 1` on a 3G-B signal | Recognized as 3G-B dual link |
 | T6 | Non-default `buffer_packing` (e.g. `YUV422_8`) | Matching pixel format |
+| T6b | `buffer_packing` the board doesn't support (e.g. `RGB_32` on a DELTA-12G2c-asi8c-elp-h) | `EINVAL`, "does not support" |
 | T7 | Interlaced signal | Correct field order |
 | T8 | `ffplay` | Picture matches the signal |
 | T10 | Fractional frame rate (29.97, 59.94) with embedded audio | Clean capture, no extraction error, no click or repeated audio |

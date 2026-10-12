@@ -604,6 +604,63 @@ int ff_videomaster_parse_sdp_file(VideoMasterData    *videomaster_data,
     return 0;
 }
 
+void ff_videomaster_set_video_color_properties_ip(
+    VideoMasterContext *videomaster_context, AVCodecParameters *codecpar)
+{
+    const VHD_SDP_ESSENCE_ST2110_20 *video;
+
+    if (!videomaster_context->ip_video_sdp_mode)
+        return;
+
+    video = &videomaster_context->ip_video_sdp_media[0].ST2110_20;
+    av_log(videomaster_context->avctx, AV_LOG_TRACE,
+           "SDP colorimetry: %s, TCS: %s\n",
+           VHD_SDP_VIDEO_COLORIMETRY_ToPrettyString(video->Colorimetry),
+           VHD_SDP_VIDEO_TCS_ToPrettyString(video->Tcs));
+
+    switch (video->Colorimetry)
+    {
+    case VHD_SDP_VIDEO_COLORIMETRY_BT601:
+        codecpar->color_space = AVCOL_SPC_SMPTE170M;
+        break;
+    case VHD_SDP_VIDEO_COLORIMETRY_BT709:
+        codecpar->color_primaries = AVCOL_PRI_BT709;
+        codecpar->color_trc = AVCOL_TRC_BT709;
+        codecpar->color_space = AVCOL_SPC_BT709;
+        break;
+    case VHD_SDP_VIDEO_COLORIMETRY_BT2020:
+    case VHD_SDP_VIDEO_COLORIMETRY_BT2100:
+        codecpar->color_primaries = AVCOL_PRI_BT2020;
+        codecpar->color_trc = AVCOL_TRC_BT2020_10;
+        codecpar->color_space = AVCOL_SPC_BT2020_NCL;
+        break;
+    default:
+        av_log(videomaster_context->avctx, AV_LOG_TRACE,
+               "SDP colorimetry not mapped, using the picture height\n");
+        break;
+    }
+
+    switch (video->Tcs)
+    {
+    case VHD_SDP_VIDEO_TCS_PQ:
+        codecpar->color_trc = AVCOL_TRC_SMPTE2084;
+        break;
+    case VHD_SDP_VIDEO_TCS_HLG:
+        codecpar->color_trc = AVCOL_TRC_ARIB_STD_B67;
+        break;
+    case VHD_SDP_VIDEO_TCS_LINEAR:
+    case VHD_SDP_VIDEO_TCS_BT2100_LIN_PQ:
+    case VHD_SDP_VIDEO_TCS_BT2100_LIN_HLG:
+        codecpar->color_trc = AVCOL_TRC_LINEAR;
+        break;
+    case VHD_SDP_VIDEO_TCS_ST428_1:
+        codecpar->color_trc = AVCOL_TRC_SMPTE428;
+        break;
+    default:
+        break;
+    }
+}
+
 /* ---- Demuxer validation functions ---- */
 
 int ff_videomaster_parse_ip_essence_network(AVFormatContext    *avctx,

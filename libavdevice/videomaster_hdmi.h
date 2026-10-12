@@ -99,6 +99,20 @@ ff_videomaster_get_buffer_packing_from_cable_bit_sampling_hdmi(
     VHD_DV_SAMPLING cable_bit_sampling);
 
 /**
+ * @brief Tags the video colorimetry from the HDMI cable color space and the
+ * HDR InfoFrame EOTF.
+ *
+ * Also tags RGB buffer packings: an RGB cable goes through unconverted, so
+ * its range is kept. Color spaces the board can't convert are left to the
+ * picture height heuristic.
+ *
+ * @param videomaster_context The VideoMaster context, with an opened stream.
+ * @param codecpar Codec parameters of the video stream.
+ */
+void ff_videomaster_set_video_color_properties_hdmi(
+    VideoMasterContext *videomaster_context, AVCodecParameters *codecpar);
+
+/**
  * @brief Retrieves HDMI audio properties from DV audio infoframe/AES status.
  *
  * @param avctx AVFormatContext for logging.
@@ -178,10 +192,9 @@ int ff_videomaster_start_stream_hdmi(VideoMasterContext *videomaster_context);
  * @param slot_to_unlock Receives the slot handle to pass to unlock.
  * @return 0 on success, AVERROR(EAGAIN) on timeout, AVERROR(EIO) on failure.
  */
-int ff_videomaster_lock_next_slot_hdmi(VideoMasterContext *ctx,
-                                       uint8_t **video_buf, uint32_t *video_size,
-                                       uint8_t **audio_buf, uint32_t *audio_size,
-                                       void    **slot_to_unlock);
+int ff_videomaster_lock_next_slot_hdmi(
+    VideoMasterContext *ctx, uint8_t **video_buf, uint32_t *video_size,
+    uint8_t **audio_buf, uint32_t *audio_size, void **slot_to_unlock);
 
 /** @brief Unlocks the slot obtained from ff_videomaster_lock_next_slot_hdmi. */
 int ff_videomaster_unlock_slot_hdmi(VideoMasterContext *ctx, void *slot);
